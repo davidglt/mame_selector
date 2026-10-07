@@ -3,6 +3,7 @@
 # GNU GPL version 3 or later. WITHOUT ANY WARRANTY. See LICENSE.
 import asyncio
 import codecs
+import collections
 import inspect
 import json
 import os
@@ -31,15 +32,33 @@ DEFAULTS = {
     'ssh.auth_mode': 'password', 'ssh.private_key': '', 'ssh.password': '',
     'ssh.key_passphrase': '', 'ssh.legacy_rsa': 'true',
     'ssh.save_credentials': 'false', 'ssh.remote_listing_mode': 'ssh',
+    'terminal.scrollback_lines': '10000',
 }
 CONNECTION_KEYS = ('ssh.host', 'ssh.port', 'ssh.username', 'ssh.auth_mode', 'ssh.password',
                    'ssh.private_key', 'ssh.key_passphrase', 'ssh.legacy_rsa')
+SCROLLBACK_KEY = 'terminal.scrollback_lines'
+MAX_SCROLLBACK = sys.maxsize  # collections.deque(maxlen=...) cannot represent more; no lower policy cap
 PAGE_SIZE = 40
 
 
 def local(value):
     path = Path(value.strip()).expanduser()
     return (path if path.is_absolute() else BASE / path).resolve()
+
+
+def parse_scrollback(text):
+    """Return the retained history line count from a positive base-10 integer string."""
+    message = ('Terminal scrollback lines must be a positive whole number '
+               f'(1 to {MAX_SCROLLBACK}), for example 10000.')
+    if not isinstance(text, str) or any(c in text for c in '\r\n\0'):
+        raise ValueError('Terminal scrollback lines cannot contain line breaks or NUL characters.')
+    text = text.strip()
+    if not (text.isascii() and text.isdigit()) or len(text) > 40:
+        raise ValueError(message)
+    number = int(text)
+    if not 1 <= number <= MAX_SCROLLBACK:
+        raise ValueError(message)
+    return number
 
 
 def active_keys(mode):
@@ -148,12 +167,16 @@ def paste_payload(text, bracketed=False):
 
 
 class TerminalScreen(pyte.Screen):
-    """pyte screen adding alternate screens, bracketed paste and safe handling of private CSI."""
+    """pyte screen adding alternate screens, bracketed paste, safe handling of private CSI
+    and bounded scrollback of lines that scroll off the main screen."""
     alt = None
     bracketed_paste = False
     reply = None
 
-    def __init__(self, columns, lines):
+    def __init__(self, columns, lines, scrollback=10000):
+        self.history = collections.deque(maxlen=scrollback)
+        self.history_total = 0  # lines ever retained, including evicted ones
+        self.styles = {}
         super().__init__(columns, lines)
         for name in set(pyte.Stream.csi.values()) - {'set_mode', 'reset_mode'}:
             method = getattr(self, name)
@@ -175,6 +198,41 @@ class TerminalScreen(pyte.Screen):
     def reset(self):
         self.alt, self.bracketed_paste = None, False
         super().reset()
+
+    def history_line(self, line):
+        """Compact (text, style) runs of a screen row, without trailing default blanks."""
+        cells = [line[x] for x in range(min(self.columns, max(line, default=-1) + 1))]
+        while cells and cells[-1] == self.default_char:
+            cells.pop()
+        runs = []
+        for char in cells:
+            if not char.data:
+                continue
+            style = self.styles.get(char[1:])
+            if style is None:
+                if len(self.styles) >= 1024:
+                    self.styles.clear()
+                style = self.styles[char[1:]] = char._replace(data='')
+            if runs and runs[-1][1] is style:
+                runs[-1][0].append(char.data)
+            else:
+                runs.append(([char.data], style))
+        return tuple((''.join(data), style) for data, style in runs)
+
+    def index(self):
+        # Only a real scroll of the whole main screen creates history; application
+        # scrolling regions and the alternate screen never do.
+        if self.alt is None and self.history.maxlen:
+            top, bottom = self.margins or (0, self.lines - 1)
+            if self.cursor.y == bottom and top == 0 and bottom == self.lines - 1:
+                self.history.append(self.history_line(self.buffer[0]))
+                self.history_total += 1
+        super().index()
+
+    def erase_in_display(self, how=0, *args, **kwargs):
+        super().erase_in_display(how, *args, **kwargs)
+        if how == 3 and self.alt is None:
+            self.history.clear()
 
     def write_process_input(self, data):
         if self.reply:
@@ -305,7 +363,10 @@ class TerminalWindow:
     """Tkinter renderer for a pyte screen; all methods run on the Tk main thread."""
     def __init__(self, app, values):
         self.app, self.state, self.destroy_on_end = app, 'connecting', False
-        self.pump_job = self.resize_job = None
+        self.pump_job = self.resize_job = self.render_job = None
+        self.offset, self.seen_total = 0, 0  # lines scrolled up from the live bottom
+        self.history_view, self.rendered_top, self.bar_state = False, None, None
+        self.scrollback = parse_scrollback(values[SCROLLBACK_KEY])  # fixed for this session
         self.decoder = codecs.getincrementaldecoder('utf-8')('replace')
         self.window = tk.Toplevel(app.root)
         self.window.title(f"SSH terminal - {values['ssh.username']}@{values['ssh.host']}:{values['ssh.port']}")
@@ -324,6 +385,8 @@ class TerminalWindow:
         self.close_button = ttk.Button(bar, text='Disconnect', command=self.close_clicked)
         self.close_button.pack(side='left')
         ttk.Label(bar, textvariable=self.status).pack(side='left', padx=8)
+        self.scrollbar = ttk.Scrollbar(self.window, orient='vertical', command=self.scroll_command)
+        self.scrollbar.pack(side='right', fill='y')
         self.text = tk.Text(self.window, width=80, height=24, font=self.font, wrap='none', padx=0, pady=0,
                             borderwidth=0, highlightthickness=0, insertwidth=0, undo=False,
                             foreground=TERMINAL_FG, background=TERMINAL_BG, cursor='xterm',
@@ -331,7 +394,7 @@ class TerminalWindow:
         self.text.pack(fill='both', expand=True)
         self.text.tag_configure('cursor', foreground=TERMINAL_BG, background=TERMINAL_FG)
         self.tags = set()
-        self.screen = TerminalScreen(80, 24)
+        self.screen = TerminalScreen(80, 24, self.scrollback)
         self.screen.reply = self.reply
         self.stream = pyte.Stream(self.screen)
         self.stream.use_utf8 = False
@@ -340,6 +403,9 @@ class TerminalWindow:
         self.text.bind('<Key>', self.key)
         self.text.bind('<Button-1>', lambda event: self.text.focus_set())
         self.text.bind('<Button-2>', lambda event: 'break')
+        for sequence in ('<MouseWheel>', '<Button-4>', '<Button-5>'):
+            self.text.bind(sequence, self.wheel)
+            self.scrollbar.bind(sequence, self.wheel)
         self.text.bind('<Configure>', self.configured)
         self.window.bind('<Destroy>', self.destroyed)
         self.window.protocol('WM_DELETE_WINDOW', self.window_closed)
@@ -356,6 +422,7 @@ class TerminalWindow:
         self.text.delete('1.0', 'end')
         self.text.insert('1.0', '\n' * (self.screen.lines - 1))
         self.text.configure(state='disabled')
+        self.history_view = False
         self.screen.dirty.update(range(self.screen.lines))
         self.render()
         self.text.xview_moveto(0)
@@ -379,27 +446,69 @@ class TerminalWindow:
             self.text.tag_raise('cursor')
         return name
 
+    def runs(self, line):
+        runs, last = [], None
+        for x in range(self.screen.columns):
+            char = line[x]
+            if not char.data:
+                continue
+            tag = self.style_tag(char)
+            if runs and tag == last:
+                runs[-1][0].append(char.data)
+            else:
+                runs.append(([char.data], tag))
+                last = tag
+        return [(''.join(data), tag) for data, tag in runs]
+
+    def put_row(self, y, runs):
+        self.text.delete(f'{y + 1}.0', f'{y + 1}.end')
+        for data, tag in runs:
+            self.text.insert(f'{y + 1}.end', data, tag)
+
+    def effective_offset(self):
+        """Lines scrolled up; always 0 on the alternate screen and never beyond the history."""
+        if self.screen.alt is not None:
+            return 0
+        self.offset = max(0, min(self.offset, len(self.screen.history)))
+        return self.offset
+
+    def update_scrollbar(self, offset):
+        screen = self.screen
+        total = len(screen.history) + screen.lines
+        top = len(screen.history) - offset
+        state = (0.0, 1.0) if screen.alt is not None else (top / total, (top + screen.lines) / total)
+        if state != self.bar_state:
+            self.bar_state = state
+            self.scrollbar.set(*state)
+            self.scrollbar.state(['disabled'] if screen.alt is not None else ['!disabled'])
+
     def render(self):
         screen, text = self.screen, self.text
+        offset = self.effective_offset()
+        self.update_scrollbar(offset)
+        text.configure(state='normal')
+        if offset:
+            top = len(screen.history) - offset
+            stamp = screen.history_total - len(screen.history) + top  # absolute index of first row
+            if not self.history_view or offset < screen.lines or stamp != self.rendered_top:
+                for y in range(screen.lines):
+                    index = top + y
+                    if index < len(screen.history):
+                        self.put_row(y, [(data, self.style_tag(style)) for data, style in screen.history[index]])
+                    else:
+                        self.put_row(y, self.runs(screen.buffer[index - len(screen.history)]))
+                text.tag_remove('cursor', '1.0', 'end')
+            self.history_view, self.rendered_top = True, stamp
+            screen.dirty.clear()
+            text.configure(state='disabled')
+            return
+        if self.history_view:
+            self.history_view = False
+            screen.dirty.update(range(screen.lines))
         dirty = sorted(y for y in screen.dirty if 0 <= y < screen.lines)
         screen.dirty.clear()
-        text.configure(state='normal')
         for y in dirty:
-            line = screen.buffer[y]
-            runs, last = [], None
-            for x in range(screen.columns):
-                char = line[x]
-                if not char.data:
-                    continue
-                tag = self.style_tag(char)
-                if runs and tag == last:
-                    runs[-1][0].append(char.data)
-                else:
-                    runs.append(([char.data], tag))
-                    last = tag
-            text.delete(f'{y + 1}.0', f'{y + 1}.end')
-            for data, tag in runs:
-                text.insert(f'{y + 1}.end', ''.join(data), tag)
+            self.put_row(y, self.runs(screen.buffer[y]))
         text.tag_remove('cursor', '1.0', 'end')
         cursor = screen.cursor
         if not cursor.hidden and 0 <= cursor.y < screen.lines:
@@ -408,12 +517,59 @@ class TerminalWindow:
             text.tag_add('cursor', f'{cursor.y + 1}.{index}', f'{cursor.y + 1}.{index + 1}')
         text.configure(state='disabled')
 
+    def schedule_render(self):
+        if self.render_job is None:
+            self.render_job = self.window.after(15, self.flush_render)
+
+    def flush_render(self):
+        self.render_job = None
+        self.render()
+
+    def scroll_to(self, top):
+        """Show history starting at row `top` (0 = oldest retained line) of history + screen."""
+        if self.screen.alt is None:
+            self.offset = len(self.screen.history) - max(0, min(top, len(self.screen.history)))
+            self.schedule_render()
+
+    def scroll_command(self, *args):
+        screen = self.screen
+        if screen.alt is not None:
+            return
+        top = len(screen.history) - self.effective_offset()
+        if args[0] == 'moveto':
+            top = round(float(args[1]) * (len(screen.history) + screen.lines))
+        elif args[0] == 'scroll':
+            step = 1 if args[2] == 'units' else max(1, screen.lines - 1)
+            top += int(float(args[1])) * step
+        self.scroll_to(top)
+
+    def wheel(self, event):
+        if event.num == 4:
+            notches = 1
+        elif event.num == 5:
+            notches = -1
+        else:
+            notches = event.delta / 120 if abs(event.delta) >= 120 else (event.delta > 0) - (event.delta < 0)
+        if self.screen.alt is None and notches:
+            lines = max(1, round(abs(notches) * 3))
+            top = len(self.screen.history) - self.effective_offset()
+            self.scroll_to(top - lines if notches > 0 else top + lines)
+        return 'break'
+
+    def scroll_to_bottom(self):
+        if self.offset:
+            self.offset = 0
+            self.render()
+
     def feed(self, data):
         try:
             self.stream.feed(self.decoder.decode(data))
         except Exception:
             self.stream = pyte.Stream(self.screen)
             self.stream.use_utf8 = False
+        added, self.seen_total = self.screen.history_total - self.seen_total, self.screen.history_total
+        if self.offset and added:
+            self.offset += added  # keep the viewed lines in place; clamped when evicted
 
     def pump(self):
         self.pump_job = None
@@ -473,6 +629,7 @@ class TerminalWindow:
         elif self.state == 'connected':
             text = translate_key(event.keysym, event.char, state, self.screen.application_cursor)
             if text:
+                self.scroll_to_bottom()
                 self.link.send(('input', text.encode('utf-8')))
         return 'break'
 
@@ -501,6 +658,7 @@ class TerminalWindow:
                 self.text.focus_set()
                 return
         if data:
+            self.scroll_to_bottom()
             self.link.send(('input', data.encode('utf-8')))
         self.text.focus_set()
 
@@ -525,10 +683,10 @@ class TerminalWindow:
 
     def destroyed(self, event):
         if event.widget is self.window:
-            for job in (self.pump_job, self.resize_job):
+            for job in (self.pump_job, self.resize_job, self.render_job):
                 if job is not None:
                     self.window.after_cancel(job)
-            self.pump_job = self.resize_job = None
+            self.pump_job = self.resize_job = self.render_job = None
 
     def destroy(self):
         if self.window.winfo_exists():
@@ -627,7 +785,8 @@ class App:
                   ('Remote ROMs:', 'ssh.remote_dir'), ('Remote samples:', 'samples.remote_dir'),
                   ('Authentication:', 'ssh.auth_mode'), ('Password:', 'ssh.password'),
                   ('Private key:', 'ssh.private_key'), ('Key passphrase:', 'ssh.key_passphrase'),
-                  ('Remote listing:', 'ssh.remote_listing_mode')]
+                  ('Remote listing:', 'ssh.remote_listing_mode'),
+                  ('Terminal scrollback lines:', SCROLLBACK_KEY)]
         choices = {'content.mode': ('roms', 'samples'), 'ssh.auth_mode': ('password', 'key'),
                    'ssh.remote_listing_mode': ('ssh', 'sftp')}
         for row, (label, key) in enumerate(labels):
@@ -649,14 +808,14 @@ class App:
                 button.grid(row=row, column=2, padx=8)
                 self.settings.append(button)
         for row, column, label, command in [(0, 3, 'Load', self.load),
-                (10, 2, 'Browse...', self.browse_key), (14, 3, 'Save', self.save)]:
+                (10, 2, 'Browse...', self.browse_key), (15, 3, 'Save', self.save)]:
             button = ttk.Button(config, text=label, command=command)
             button.grid(row=row, column=column, padx=8)
             self.settings.append(button)
             if row == 10:
                 self.key_browse = button
-        for row, key, label in [(13, 'ssh.legacy_rsa', 'Allow legacy SSH RSA (SHA-1)'),
-                (14, 'ssh.save_credentials', 'Save credentials in .properties (plain text)')]:
+        for row, key, label in [(14, 'ssh.legacy_rsa', 'Allow legacy SSH RSA (SHA-1)'),
+                (15, 'ssh.save_credentials', 'Save credentials in .properties (plain text)')]:
             check = ttk.Checkbutton(config, text=label, variable=self.v[key], onvalue='true', offvalue='false')
             check.grid(row=row, column=1, sticky='w')
             self.settings.append(check)
@@ -765,13 +924,15 @@ class App:
         if name:
             self.v['ssh.private_key'].set(name)
 
-    def values(self, terminal=False):
+    def values(self, terminal=False, scrollback=False):
         values = {key: var.get() for key, var in self.v.items()}
+        if terminal or scrollback:
+            values[SCROLLBACK_KEY] = str(parse_scrollback(values[SCROLLBACK_KEY]))
         for key in ('rom.source', 'samples.source', 'ssh.host', 'ssh.port', 'ssh.username',
                     'ssh.remote_dir', 'samples.remote_dir', 'ssh.private_key'):
             values[key] = values[key].strip()
         if terminal:
-            values = {key: values[key] for key in CONNECTION_KEYS}
+            values = {key: values[key] for key in CONNECTION_KEYS + (SCROLLBACK_KEY,)}
         if any('\n' in value or '\r' in value or '\0' in value for value in values.values()):
             raise ValueError('Values cannot contain line breaks or NUL characters.')
         if not terminal:
@@ -800,7 +961,7 @@ class App:
 
     def save(self):
         try:
-            values = self.values()
+            values = self.values(scrollback=True)
             if values['ssh.save_credentials'] == 'true':
                 if not messagebox.askyesno('Save credentials?', 'Save credentials in plain text?'):
                     return

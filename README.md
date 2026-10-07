@@ -98,7 +98,7 @@ Mode and configuration controls are disabled during batch confirmation and remot
 
 ### Existing configuration files
 
-Old `mame_selector.properties` files remain supported. Missing keys use defaults: `content.mode=roms`, `samples.source=samples/`, and `samples.remote_dir=/var/mobile/Media/ROMs/MAME4iOS/samples/`. Existing `rom.source` and `ssh.remote_dir` settings remain unchanged.
+Old `mame_selector.properties` files remain supported. Missing keys use defaults: `content.mode=roms`, `samples.source=samples/`, and `samples.remote_dir=/var/mobile/Media/ROMs/MAME4iOS/samples/`. Existing `rom.source` and `ssh.remote_dir` settings remain unchanged. A file without `terminal.scrollback_lines` (older versions) uses the default `10000`; saving writes the key.
 
 Clicking `Save` writes the new settings along with the existing ones. Internal operation snapshots are not written to the configuration file. You do not need to replace your local configuration with the example file.
 
@@ -218,16 +218,21 @@ OpenSSH `known_hosts` is not imported automatically. Do not remove saved keys me
 
 Click `>_ SSH terminal` in the Configuration panel to open a separate interactive terminal window on the configured server. It uses the same AsyncSSH connection code as the file operations (no external `ssh` executable), so no second SSH-password prompt appears when valid credentials are already entered. The first connection to an unknown server still shows the explicit host-key trust prompt, and changed server keys are rejected. Remote prompts such as `sudo` or `su` are not suppressed or answered automatically.
 
-- The host, port, user, authentication mode, password, key path, key passphrase and legacy-RSA setting are copied when the window opens and stay fixed for that session.
+- The host, port, user, authentication mode, password, key path, key passphrase, legacy-RSA setting and `Terminal scrollback lines` are copied when the window opens and stay fixed for that session. Changing the scrollback setting afterwards (it is locked while a session is open anyway) affects only the next session.
 - Local ROM/sample folders and remote directories are not needed and are not used. No `cd` or any other command is run automatically.
 - A real remote PTY is requested with `TERM=vt100`. Screen state is emulated with pyte and drawn in Tkinter: cursor addressing, erase operations, scrolling regions, bold/underline/reverse, basic colors, DEC line-drawing characters, application cursor keys, and device/cursor-position replies. Alternate-screen modes (`?47`, `?1047`, `?1049`) and bracketed paste (`?2004`) are also implemented. The remote PTY size follows the window size.
 - Keys: printable characters (character at a time, no local echo), Enter, Backspace (sends DEL), Tab, Shift+Tab, Escape, arrows, Home/End/PageUp/PageDown/Insert/Delete, F1-F12, Alt+key (ESC prefix) and Ctrl+letter and other control characters. Ctrl+C, Ctrl+D, Ctrl+Z and Ctrl+V go to the remote side unchanged.
 - Copy and paste: select text with the mouse and use the `Copy` button or Ctrl+Shift+C; paste with the `Paste` button or Ctrl+Shift+V. Pasting several lines asks for confirmation first, because the text may execute remote commands. Control characters (including Escape) are removed from pasted text. Bracketed paste is used only if the remote application enabled it. A redraw of a selected line clears the selection.
 - `Disconnect` ends the session; after the session ends the button becomes `Close`. Closing the window also disconnects. The main window cannot be closed while a session is active.
 - While a terminal session is active, file operations, `Save` and configuration edits are disabled (this initial implementation serializes them to avoid concurrent host-registry writes). When the session ends the remote listing is invalidated, because console commands may have changed remote files; click `Refresh` to reload it. Local selections are not modified.
+- Scrollback: the terminal window has a vertical scrollbar and responds to the mouse wheel (3 lines per notch). Scrolling is purely local; no keys or escape sequences are sent to the remote side. The setting `Terminal scrollback lines` (`terminal.scrollback_lines` in `mame_selector.properties`, default `10000`) is the number of completed lines retained after they scroll off the top of the main screen; the visible rows are not counted and the remote PTY size never includes history or the scrollbar. The value must be a positive base-10 integer (`1`, `250`, `10000`); zero, negative, fractional, empty, malformed values, line breaks and NUL are rejected with an error before `Save` or terminal launch. There is no arbitrary upper limit other than the platform's maximum integer, but memory grows with the number of retained lines, so choose a value your computer can hold (a typical 80-column line needs on the order of a few hundred bytes).
+- Following versus reading: at the bottom the view follows new output. After you scroll up, the lines you are reading stay in place while output arrives; when the oldest lines are discarded once the limit is exceeded, the view is clamped to the oldest retained line. Typing a key that is sent to the remote side, or pasting, returns to the live bottom; mouse-wheel, scrollbar, `Copy` and Ctrl+Shift+C do not. The cursor is hidden while browsing history. After the session ends the retained history can still be scrolled and read.
+- Alternate-screen applications (`vi`, `vim`, `top`, `less`, using `?47`, `?1047` or `?1049`) are kept separate: their frames are never added to the history, the live screen is always shown, and the scrollbar and wheel are disabled (the wheel does nothing) until the application exits, when the previous screen and history are restored.
 - Credentials are never put in process arguments, logs or extra settings files.
 
-Not supported: mouse reporting, scrollback, 256-color/truecolor terminal types, italics/blink, window-title changes, multiple concurrent terminals, SSH agent/X11/port forwarding, and non-UTF-8 remote locales. This is a VT100-level terminal, not a universal terminal emulator; applications that require a richer terminal type may render incorrectly.
+Scrollback limitations: only lines that scroll off the whole main screen are retained. Lines pushed out by an application's partial scrolling region (`TERM=vt100` full-screen programs that set a region smaller than the screen), screen redraws, cursor movement, erase and resize are not history, and a terminal cannot distinguish a program that redraws by scrolling the whole screen from ordinary shell output, so such output is retained like shell output. Lines removed by shrinking the window are not added to history, history lines are not reflowed when the window width changes, and `clear` sequences that erase the scrollback (`ESC[3J`) clear it. Selection and `Copy` apply to the rows currently displayed; text that was never displayed cannot be copied in one operation. Shrinking the window while an alternate-screen application runs may clip the restored main screen.
+
+Not supported: mouse reporting, 256-color/truecolor terminal types, italics/blink, window-title changes, multiple concurrent terminals, SSH agent/X11/port forwarding, and non-UTF-8 remote locales. This is a VT100-level terminal, not a universal terminal emulator; applications that require a richer terminal type may render incorrectly.
 
 ### Smoke test
 
@@ -238,7 +243,8 @@ Use an expendable file and a test server first.
 3. Run `top`; check that it refreshes, then press `q`.
 4. Resize the window and run `stty size`; it should match the window.
 5. Run `sleep 100` and press Ctrl+C.
-6. Click `Disconnect`; confirm the main window re-enables its controls and `Refresh` is needed again.
+6. Run `seq 1 300`, scroll up with the wheel and scrollbar, run `echo done` while scrolled (typing returns to the bottom), then open and quit `vi` and check the earlier output is still there.
+7. Click `Disconnect`; confirm the main window re-enables its controls and `Refresh` is needed again.
 
 Live vi/top behavior on the author's device has not been verified.
 

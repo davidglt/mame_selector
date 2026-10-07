@@ -2,6 +2,8 @@
 # Copyright (C) 2026 David González López-Tercero
 # GNU GPL version 3 or later. WITHOUT ANY WARRANTY. See LICENSE.
 import asyncio
+import codecs
+import inspect
 import json
 import os
 from pathlib import Path
@@ -9,11 +11,14 @@ import posixpath
 import queue
 import shlex
 import stat
+import sys
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+import tkinter.font as tkfont
 import asyncssh
 from PIL import Image, ImageDraw, ImageOps, ImageTk
+import pyte
 
 BASE = Path(__file__).resolve().parent
 CONFIG = BASE / 'mame_selector.properties'
@@ -74,6 +79,462 @@ def atomic_write(path, text):
     os.replace(temporary, path)
 
 
+TERM_TYPE = 'vt100'
+DECCKM = 1 << 5
+ALT_SCREEN_MODES = (47, 1047, 1049)
+BRACKETED_PASTE_MODE = 2004
+DECCOLM_MODE = 3
+OUTPUT_LIMIT = 1 << 20
+PASTE_START, PASTE_END = '\x1b[200~', '\x1b[201~'
+SHIFT_MASK, CONTROL_MASK = 0x1, 0x4
+ALT_MASK = 0x20000 if sys.platform == 'win32' else 0x8
+ARROWS = {'Up': 'A', 'Down': 'B', 'Right': 'C', 'Left': 'D',
+          'KP_Up': 'A', 'KP_Down': 'B', 'KP_Right': 'C', 'KP_Left': 'D'}
+KEYS = {'Return': '\r', 'KP_Enter': '\r', 'BackSpace': '\x7f', 'Tab': '\t', 'Escape': '\x1b',
+        'ISO_Left_Tab': '\x1b[Z', 'Delete': '\x1b[3~', 'KP_Delete': '\x1b[3~',
+        'Insert': '\x1b[2~', 'KP_Insert': '\x1b[2~', 'Home': '\x1b[1~', 'KP_Home': '\x1b[1~',
+        'End': '\x1b[4~', 'KP_End': '\x1b[4~', 'Prior': '\x1b[5~', 'KP_Prior': '\x1b[5~',
+        'Next': '\x1b[6~', 'KP_Next': '\x1b[6~', 'F1': '\x1bOP', 'F2': '\x1bOQ', 'F3': '\x1bOR',
+        'F4': '\x1bOS', 'F5': '\x1b[15~', 'F6': '\x1b[17~', 'F7': '\x1b[18~', 'F8': '\x1b[19~',
+        'F9': '\x1b[20~', 'F10': '\x1b[21~', 'F11': '\x1b[23~', 'F12': '\x1b[24~'}
+CONTROL_KEYS = {'space': 0, 'at': 0, 'bracketleft': 0x1b, 'backslash': 0x1c, 'bracketright': 0x1d,
+                'asciicircum': 0x1e, 'underscore': 0x1f, 'slash': 0x1f, 'question': 0x7f}
+ANSI_COLORS = {'black': '#000000', 'red': '#cd3131', 'green': '#0dbc79', 'brown': '#e5e510',
+               'blue': '#2472c8', 'magenta': '#bc3fbc', 'cyan': '#11a8cd', 'white': '#e5e5e5',
+               'brightblack': '#666666', 'brightred': '#f14c4c', 'brightgreen': '#23d18b',
+               'brightbrown': '#f5f543', 'brightblue': '#3b8eea', 'brightmagenta': '#d670d6',
+               'brightcyan': '#29b8db', 'brightwhite': '#ffffff'}
+TERMINAL_FG, TERMINAL_BG = '#e5e5e5', '#000000'
+
+
+def translate_key(keysym, char, state, application_cursor=False):
+    """Return the text a key press sends to the remote PTY, or None to send nothing."""
+    ctrl, alt, shift = state & CONTROL_MASK, state & ALT_MASK, state & SHIFT_MASK
+    printable = bool(char) and len(char) == 1 and char >= ' ' and char != '\x7f'
+    if ctrl and alt and printable:
+        ctrl = alt = 0  # AltGr is reported as Ctrl+Alt on Windows
+    if keysym in ARROWS:
+        return ('\x1bO' if application_cursor else '\x1b[') + ARROWS[keysym]
+    if keysym == 'Tab' and shift:
+        text = '\x1b[Z'
+    elif keysym == 'BackSpace' and ctrl:
+        text = '\x08'
+    elif keysym in KEYS:
+        text = KEYS[keysym]
+    elif ctrl:
+        key = keysym if len(keysym) == 1 else (char if printable else '')
+        if len(key) == 1 and key.isascii() and key.isalpha():
+            text = chr(ord(key.lower()) - 96)
+        elif keysym in CONTROL_KEYS:
+            text = chr(CONTROL_KEYS[keysym])
+        elif len(char) == 1 and char < ' ':
+            text = char
+        else:
+            return None
+    elif printable:
+        text = char
+    else:
+        return None
+    return '\x1b' + text if alt and not text.startswith(('\x1b[', '\x1bO')) else text
+
+
+def paste_payload(text, bracketed=False):
+    """Return (data, multiline) for pasting text; control characters are removed."""
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    text = ''.join(c for c in text if c in '\t\n' or not (c < ' ' or '\x7f' <= c <= '\x9f'))
+    multiline = '\n' in text
+    text = text.replace('\n', '\r')
+    return (PASTE_START + text + PASTE_END if bracketed else text), multiline
+
+
+class TerminalScreen(pyte.Screen):
+    """pyte screen adding alternate screens, bracketed paste and safe handling of private CSI."""
+    alt = None
+    bracketed_paste = False
+    reply = None
+
+    def __init__(self, columns, lines):
+        super().__init__(columns, lines)
+        for name in set(pyte.Stream.csi.values()) - {'set_mode', 'reset_mode'}:
+            method = getattr(self, name)
+            parameters = inspect.signature(method).parameters
+            if 'private' not in parameters and not any(p.kind is p.VAR_KEYWORD for p in parameters.values()):
+                setattr(self, name, self.ignoring_private(method))
+
+    @staticmethod
+    def ignoring_private(method):
+        def call(*args, private=False, **kwargs):
+            if not private:
+                return method(*args, **kwargs)
+        return call
+
+    @property
+    def application_cursor(self):
+        return DECCKM in self.mode
+
+    def reset(self):
+        self.alt, self.bracketed_paste = None, False
+        super().reset()
+
+    def write_process_input(self, data):
+        if self.reply:
+            self.reply(data)
+
+    def set_mode(self, *modes, **kwargs):
+        if kwargs.get('private'):
+            remaining = []
+            for mode in modes:
+                if mode in ALT_SCREEN_MODES:
+                    self.enter_alternate()
+                elif mode == BRACKETED_PASTE_MODE:
+                    self.bracketed_paste = True
+                elif mode != DECCOLM_MODE:
+                    remaining.append(mode)
+            modes = remaining
+        if modes:
+            super().set_mode(*modes, **kwargs)
+
+    def reset_mode(self, *modes, **kwargs):
+        if kwargs.get('private'):
+            remaining = []
+            for mode in modes:
+                if mode in ALT_SCREEN_MODES:
+                    self.exit_alternate()
+                elif mode == BRACKETED_PASTE_MODE:
+                    self.bracketed_paste = False
+                elif mode != DECCOLM_MODE:
+                    remaining.append(mode)
+            modes = remaining
+        if modes:
+            super().reset_mode(*modes, **kwargs)
+
+    def enter_alternate(self):
+        if self.alt is not None:
+            return
+        self.alt = {'buffer': {y: dict(line) for y, line in self.buffer.items()},
+                    'x': self.cursor.x, 'y': self.cursor.y, 'attrs': self.cursor.attrs,
+                    'margins': self.margins}
+        self.buffer.clear()
+        self.margins = None
+        self.dirty.update(range(self.lines))
+
+    def exit_alternate(self):
+        saved, self.alt = self.alt, None
+        if saved is None:
+            return
+        self.buffer.clear()
+        for y, cells in saved['buffer'].items():
+            if y < self.lines:
+                self.buffer[y].update({x: cell for x, cell in cells.items() if x < self.columns})
+        margins = saved['margins']
+        self.margins = margins if margins is not None and margins.bottom < self.lines else None
+        self.cursor.x, self.cursor.y, self.cursor.attrs = saved['x'], saved['y'], saved['attrs']
+        self.ensure_hbounds()
+        self.ensure_vbounds()
+        self.dirty.update(range(self.lines))
+
+    def resize(self, lines=None, columns=None):
+        previous = self.columns
+        super().resize(lines, columns)
+        self.tabstops = {x for x in self.tabstops if x < self.columns}
+        self.tabstops.update(range(max(8, (previous + 7) // 8 * 8), self.columns, 8))
+        self.ensure_hbounds()
+        self.ensure_vbounds()
+
+
+class TerminalLink:
+    """Thread-safe exchange between the Tk main thread and the asyncio worker thread."""
+    def __init__(self, size):
+        self.size = size
+        self.out = queue.Queue()
+        self.lock = threading.Lock()
+        self.pending = 0
+        self.loop = self.task = self.inbox = None
+        self.closing = False
+
+    def attach(self, loop, task, inbox):
+        with self.lock:
+            self.loop, self.task, self.inbox = loop, task, inbox
+            if self.closing:
+                loop.call_soon(task.cancel)
+
+    def send(self, item):
+        with self.lock:
+            loop, inbox, closing = self.loop, self.inbox, self.closing
+        if loop is None or closing:
+            return False
+        try:
+            loop.call_soon_threadsafe(inbox.put_nowait, item)
+        except RuntimeError:
+            return False
+        return True
+
+    def close(self):
+        with self.lock:
+            if self.closing:
+                return
+            self.closing = True
+            loop, task = self.loop, self.task
+        if loop is not None:
+            try:
+                loop.call_soon_threadsafe(task.cancel)
+            except RuntimeError:
+                pass
+
+    def put_data(self, data):
+        with self.lock:
+            self.pending += len(data)
+        self.out.put(('data', data))
+
+    def drain(self, limit=262144):
+        events, total = [], 0
+        while total < limit:
+            try:
+                event = self.out.get_nowait()
+            except queue.Empty:
+                break
+            events.append(event)
+            if event[0] == 'data':
+                total += len(event[1])
+                with self.lock:
+                    self.pending -= len(event[1])
+        return events
+
+
+class TerminalWindow:
+    """Tkinter renderer for a pyte screen; all methods run on the Tk main thread."""
+    def __init__(self, app, values):
+        self.app, self.state, self.destroy_on_end = app, 'connecting', False
+        self.pump_job = self.resize_job = None
+        self.decoder = codecs.getincrementaldecoder('utf-8')('replace')
+        self.window = tk.Toplevel(app.root)
+        self.window.title(f"SSH terminal - {values['ssh.username']}@{values['ssh.host']}:{values['ssh.port']}")
+        families = set(tkfont.families(self.window))
+        family = next((name for name in ('Consolas', 'DejaVu Sans Mono', 'Menlo', 'Courier New')
+                       if name in families), 'TkFixedFont')
+        self.font = tkfont.Font(self.window, family=family, size=11)
+        self.bold_font = tkfont.Font(self.window, family=family, size=11, weight='bold')
+        self.cell_width = max(1, self.font.measure('0'))
+        self.cell_height = max(1, self.font.metrics('linespace'))
+        self.status = tk.StringVar(value='Connecting...')
+        bar = ttk.Frame(self.window, padding=4)
+        bar.pack(fill='x')
+        ttk.Button(bar, text='Copy', command=self.copy).pack(side='left')
+        ttk.Button(bar, text='Paste', command=self.paste).pack(side='left', padx=4)
+        self.close_button = ttk.Button(bar, text='Disconnect', command=self.close_clicked)
+        self.close_button.pack(side='left')
+        ttk.Label(bar, textvariable=self.status).pack(side='left', padx=8)
+        self.text = tk.Text(self.window, width=80, height=24, font=self.font, wrap='none', padx=0, pady=0,
+                            borderwidth=0, highlightthickness=0, insertwidth=0, undo=False,
+                            foreground=TERMINAL_FG, background=TERMINAL_BG, cursor='xterm',
+                            selectbackground='#264f78', selectforeground='#ffffff')
+        self.text.pack(fill='both', expand=True)
+        self.text.tag_configure('cursor', foreground=TERMINAL_BG, background=TERMINAL_FG)
+        self.tags = set()
+        self.screen = TerminalScreen(80, 24)
+        self.screen.reply = self.reply
+        self.stream = pyte.Stream(self.screen)
+        self.stream.use_utf8 = False
+        self.link = TerminalLink((80, 24, 0, 0))
+        self.reset_view()
+        self.text.bind('<Key>', self.key)
+        self.text.bind('<Button-1>', lambda event: self.text.focus_set())
+        self.text.bind('<Button-2>', lambda event: 'break')
+        self.text.bind('<Configure>', self.configured)
+        self.window.bind('<Destroy>', self.destroyed)
+        self.window.protocol('WM_DELETE_WINDOW', self.window_closed)
+        self.window.minsize(320, 160)
+        self.text.focus_set()
+        self.pump_job = self.window.after(30, self.pump)
+        threading.Thread(target=app.terminal_worker, args=(dict(values), self.link), daemon=True).start()
+
+    def reply(self, data):
+        self.link.send(('input', data.encode('utf-8')))
+
+    def reset_view(self):
+        self.text.configure(state='normal')
+        self.text.delete('1.0', 'end')
+        self.text.insert('1.0', '\n' * (self.screen.lines - 1))
+        self.text.configure(state='disabled')
+        self.screen.dirty.update(range(self.screen.lines))
+        self.render()
+        self.text.xview_moveto(0)
+        self.text.yview_moveto(0)
+
+    def style_tag(self, char):
+        fg = ANSI_COLORS.get(char.fg, '#' + char.fg if len(char.fg) == 6 else TERMINAL_FG)
+        bg = ANSI_COLORS.get(char.bg, '#' + char.bg if len(char.bg) == 6 else TERMINAL_BG)
+        if char.reverse:
+            fg, bg = bg, fg
+        key = (fg, bg, char.bold, char.underscore, char.strikethrough)
+        name = 'style:' + ':'.join(map(str, key))
+        if name not in self.tags:
+            self.tags.add(name)
+            options = {'foreground': fg, 'underline': char.underscore, 'overstrike': char.strikethrough,
+                       'font': self.bold_font if char.bold else self.font}
+            if bg != TERMINAL_BG:
+                options['background'] = bg
+            self.text.tag_configure(name, **options)
+            self.text.tag_raise('sel')
+            self.text.tag_raise('cursor')
+        return name
+
+    def render(self):
+        screen, text = self.screen, self.text
+        dirty = sorted(y for y in screen.dirty if 0 <= y < screen.lines)
+        screen.dirty.clear()
+        text.configure(state='normal')
+        for y in dirty:
+            line = screen.buffer[y]
+            runs, last = [], None
+            for x in range(screen.columns):
+                char = line[x]
+                if not char.data:
+                    continue
+                tag = self.style_tag(char)
+                if runs and tag == last:
+                    runs[-1][0].append(char.data)
+                else:
+                    runs.append(([char.data], tag))
+                    last = tag
+            text.delete(f'{y + 1}.0', f'{y + 1}.end')
+            for data, tag in runs:
+                text.insert(f'{y + 1}.end', ''.join(data), tag)
+        text.tag_remove('cursor', '1.0', 'end')
+        cursor = screen.cursor
+        if not cursor.hidden and 0 <= cursor.y < screen.lines:
+            line, x = screen.buffer[cursor.y], min(cursor.x, screen.columns - 1)
+            index = sum(1 for column in range(x) if line[column].data)
+            text.tag_add('cursor', f'{cursor.y + 1}.{index}', f'{cursor.y + 1}.{index + 1}')
+        text.configure(state='disabled')
+
+    def feed(self, data):
+        try:
+            self.stream.feed(self.decoder.decode(data))
+        except Exception:
+            self.stream = pyte.Stream(self.screen)
+            self.stream.use_utf8 = False
+
+    def pump(self):
+        self.pump_job = None
+        events = self.link.drain()
+        data = bytearray()
+        for event in events:
+            if event[0] == 'data':
+                data += event[1]
+            elif event[0] == 'connected' and self.state == 'connecting':
+                self.state = 'connected'
+                self.status.set('Connected.')
+            elif event[0] == 'end':
+                if data:
+                    self.feed(bytes(data))
+                    data.clear()
+                self.finish(event[1])
+                return
+        if data:
+            self.feed(bytes(data))
+        if self.screen.dirty or data:
+            self.render()
+        self.pump_job = self.window.after(10 if events else 30, self.pump)
+
+    def finish(self, message):
+        self.state = 'ended'
+        self.screen.exit_alternate()
+        self.feed(f'\r\n[{message}]\r\n'.encode('utf-8'))
+        self.render()
+        self.status.set(message)
+        self.close_button.configure(text='Close')
+        self.app.terminal_finished(self, message)
+        if self.destroy_on_end:
+            self.destroy()
+
+    def configured(self, event):
+        if self.resize_job is not None:
+            self.window.after_cancel(self.resize_job)
+        self.resize_job = self.window.after(60, self.apply_size)
+
+    def apply_size(self):
+        self.resize_job = None
+        width, height = self.text.winfo_width(), self.text.winfo_height()
+        columns, lines = max(10, width // self.cell_width), max(3, height // self.cell_height)
+        if (columns, lines) == (self.screen.columns, self.screen.lines):
+            return
+        self.screen.resize(lines, columns)
+        self.reset_view()
+        self.link.size = (columns, lines, width, height)
+        self.link.send(('resize',) + self.link.size)
+
+    def key(self, event):
+        state = event.state
+        if state & CONTROL_MASK and state & SHIFT_MASK and event.keysym in ('C', 'c'):
+            self.copy()
+        elif state & CONTROL_MASK and state & SHIFT_MASK and event.keysym in ('V', 'v'):
+            self.paste()
+        elif self.state == 'connected':
+            text = translate_key(event.keysym, event.char, state, self.screen.application_cursor)
+            if text:
+                self.link.send(('input', text.encode('utf-8')))
+        return 'break'
+
+    def copy(self):
+        try:
+            text = self.text.get('sel.first', 'sel.last')
+        except tk.TclError:
+            self.status.set('Select text with the mouse first.')
+            return
+        self.window.clipboard_clear()
+        self.window.clipboard_append('\n'.join(line.rstrip() for line in text.split('\n')))
+        self.text.focus_set()
+
+    def paste(self):
+        if self.state != 'connected':
+            return
+        try:
+            clipboard = self.window.clipboard_get()
+        except tk.TclError:
+            return
+        data, multiline = paste_payload(clipboard, self.screen.bracketed_paste)
+        if multiline:
+            preview = '\n'.join(line[:100] for line in clipboard.splitlines()[:10])
+            if not messagebox.askyesno('Paste multiple lines', 'This text contains line breaks and may '
+                                       f'execute remote commands. Paste it?\n\n{preview}', parent=self.window):
+                self.text.focus_set()
+                return
+        if data:
+            self.link.send(('input', data.encode('utf-8')))
+        self.text.focus_set()
+
+    def request_close(self):
+        if self.state in ('connecting', 'connected'):
+            self.state = 'closing'
+            self.status.set('Disconnecting...')
+            self.link.close()
+
+    def close_clicked(self):
+        if self.state == 'ended':
+            self.destroy()
+        else:
+            self.request_close()
+
+    def window_closed(self):
+        self.destroy_on_end = True
+        if self.state == 'ended':
+            self.destroy()
+        else:
+            self.request_close()
+
+    def destroyed(self, event):
+        if event.widget is self.window:
+            for job in (self.pump_job, self.resize_job):
+                if job is not None:
+                    self.window.after_cancel(job)
+            self.pump_job = self.resize_job = None
+
+    def destroy(self):
+        if self.window.winfo_exists():
+            self.window.destroy()
+
+
 class App:
     def __init__(self, root):
         self.root = root
@@ -101,6 +562,7 @@ class App:
             if self.v[key].get() not in allowed:
                 self.v[key].set(DEFAULTS[key])
         self.busy = False
+        self.terminal = None
         self.events = queue.Queue()
         self.settings, self.combos = [], []
         self.roms, self.filtered, self.remote = [], [], []
@@ -198,6 +660,8 @@ class App:
             check = ttk.Checkbutton(config, text=label, variable=self.v[key], onvalue='true', offvalue='false')
             check.grid(row=row, column=1, sticky='w')
             self.settings.append(check)
+        self.terminal_button = ttk.Button(config, text='>_ SSH terminal', command=self.open_terminal)
+        self.terminal_button.grid(row=11, column=2, columnspan=2, padx=8)
         ttk.Label(config, text='ssh: POSIX shell / sftp: SFTP subsystem').grid(row=12, column=2, columnspan=2)
         split = ttk.Panedwindow(self.root, orient='horizontal')
         split.pack(fill='both', expand=True, padx=10)
@@ -278,6 +742,7 @@ class App:
             widget.configure(state='disabled' if busy else 'normal')
         for widget in self.combos:
             widget.configure(state='disabled' if busy else 'readonly')
+        self.terminal_button.configure(state='disabled' if busy else 'normal')
         self.auth_state()
         self.update_marks()
 
@@ -735,6 +1200,104 @@ class App:
         result['pending'] = [item for item in files if item not in attempted]
         self.events.put(('done', result))
 
+    def open_terminal(self):
+        if self.busy or self.terminal is not None:
+            return
+        try:
+            values = self.values(terminal=True)
+        except (OSError, ValueError) as error:
+            messagebox.showerror('SSH terminal', str(error))
+            return
+        self.set_busy(True)
+        try:
+            self.terminal = TerminalWindow(self, values)
+        except Exception:
+            self.terminal = None
+            self.set_busy(False)
+            raise
+        self.status.set('SSH terminal open; file operations and configuration are locked.')
+
+    def terminal_finished(self, window, message):
+        if self.terminal is window:
+            self.terminal = None
+            self.invalidate_remote()
+            self.set_busy(False)
+            self.status.set(f'SSH terminal closed. Remote list invalidated. ({message})')
+
+    def terminal_worker(self, values, link):
+        reason = 'Terminal worker failed.'
+        try:
+            reason = asyncio.run(self.terminal_async(values, link))
+        except BaseException as error:
+            reason = f'{type(error).__name__}: {error}'
+        link.out.put(('end', reason))
+
+    async def terminal_async(self, values, link):
+        connection = process = None
+        reason = 'Disconnected.'
+        try:
+            link.attach(asyncio.get_running_loop(), asyncio.current_task(), asyncio.Queue())
+            connection = await self.connect(values)
+            columns, lines, width, height = size = link.size
+            process = await connection.create_process(term_type=TERM_TYPE, term_size=(columns, lines, width, height),
+                                                      encoding=None, request_pty='force')
+            if link.size != size:
+                process.change_terminal_size(*link.size)
+            link.out.put(('connected',))
+            tasks = [asyncio.ensure_future(self.terminal_reader(process, link)),
+                     asyncio.ensure_future(self.terminal_writer(process, link))]
+            try:
+                await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+            for task in tasks:
+                if task.done() and not task.cancelled() and task.exception():
+                    raise task.exception()
+            reason = 'Remote session ended.'
+            try:
+                await asyncio.wait_for(process.wait_closed(), 5)
+                if process.exit_status is not None:
+                    reason = f'Remote session ended (exit status {process.exit_status}).'
+            except Exception:
+                pass
+        except asyncio.CancelledError:
+            pass
+        except Exception as error:
+            reason = f'{type(error).__name__}: {error}'
+        finally:
+            try:
+                if process is not None:
+                    process.close()
+                if connection is not None:
+                    connection.close()
+                    await asyncio.wait_for(connection.wait_closed(), 5)
+            except (Exception, asyncio.CancelledError):
+                pass
+        return reason
+
+    @staticmethod
+    async def terminal_reader(process, link):
+        while True:
+            while link.pending > OUTPUT_LIMIT:
+                await asyncio.sleep(0.02)
+            data = await process.stdout.read(65536)
+            if not data:
+                return
+            link.put_data(data)
+
+    @staticmethod
+    async def terminal_writer(process, link):
+        inbox = link.inbox
+        while True:
+            item = await inbox.get()
+            if item[0] == 'input':
+                process.stdin.write(item[1])
+                await process.stdin.drain()
+            elif item[0] == 'resize':
+                process.change_terminal_size(*item[1:])
+
     def poll(self):
         try:
             while True:
@@ -804,6 +1367,9 @@ class App:
         self.report('About / License', text)
 
     def close(self):
+        if self.terminal is not None:
+            messagebox.showwarning('SSH terminal active', 'Disconnect the SSH terminal before closing.')
+            return
         if self.busy:
             messagebox.showwarning('Operation in progress', 'Wait for the operation to finish.')
             return

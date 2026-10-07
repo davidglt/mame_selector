@@ -43,6 +43,29 @@ def active_keys(mode):
     raise ValueError('Select roms or samples.')
 
 
+def sample_placeholder():
+    scale = 4
+    image = Image.new('RGBA', (150 * scale, 110 * scale), '#ddd')
+    draw = ImageDraw.Draw(image)
+    color = '#555'
+    draw.rectangle(tuple(v * scale for v in (76, 22, 81, 81)), fill=color)
+    head = Image.new('RGBA', (32 * scale, 18 * scale), (0, 0, 0, 0))
+    ImageDraw.Draw(head).ellipse((0, 0, head.width - 1, head.height - 1), fill=color)
+    head = head.rotate(25, resample=Image.Resampling.BICUBIC, expand=True)
+    image.alpha_composite(head, (49 * scale, 65 * scale))
+    def curve(points):
+        result = []
+        for index in range(33):
+            t = index / 32
+            weights = ((1-t)**3, 3*(1-t)**2*t, 3*(1-t)*t*t, t**3)
+            result.append(tuple(sum(w*p[axis] for w, p in zip(weights, points)) * scale for axis in (0, 1)))
+        return result
+    flag = curve(((81, 22), (81, 37), (113, 35), (96, 63)))
+    flag += curve(((96, 63), (100, 44), (82, 48), (81, 34)))
+    draw.polygon(flag, fill=color)
+    return image.resize((150, 110), Image.Resampling.LANCZOS)
+
+
 def atomic_write(path, text):
     temporary = path.with_suffix(path.suffix + '.tmp')
     temporary.write_text(text, encoding='utf-8')
@@ -378,9 +401,11 @@ class App:
                     image = ImageOps.exif_transpose(source).convert('RGBA')
                     image.thumbnail((150, 110), Image.Resampling.LANCZOS)
             except (OSError, ValueError):
-                image = Image.new('RGBA', (150, 110), '#ddd')
-                label = 'Samples' if self.v['content.mode'].get() == 'samples' else 'No image'
-                ImageDraw.Draw(image).text((40, 45), label, fill='#555')
+                if self.v['content.mode'].get() == 'samples':
+                    image = sample_placeholder()
+                else:
+                    image = Image.new('RGBA', (150, 110), '#ddd')
+                    ImageDraw.Draw(image).text((40, 45), 'No image', fill='#555')
             background = Image.new('RGBA', (150, 110), '#eee')
             background.alpha_composite(image, ((150 - image.width) // 2, (110 - image.height) // 2))
             photo = ImageTk.PhotoImage(background.convert('RGB'))

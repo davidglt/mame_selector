@@ -1,10 +1,12 @@
-# Copy to mame_selector.properties and edit for your device.
-# Relative paths are resolved against the script directory.
+# UTF-8, literal values; local paths relative to script
+content.mode=roms
 rom.source=roms/
+samples.source=samples/
 ssh.host=192.168.69.53
 ssh.port=22
 ssh.username=root
 ssh.remote_dir=/var/mobile/Media/ROMs/MAME4iOS/roms/
+samples.remote_dir=/var/mobile/Media/ROMs/MAME4iOS/samples/
 ssh.auth_mode=password
 ssh.private_key=
 ssh.password=

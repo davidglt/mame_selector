@@ -19,8 +19,10 @@ BASE = Path(__file__).resolve().parent
 CONFIG = BASE / 'mame_selector.properties'
 HOSTS = BASE / 'mame_selector_host_keys.json'
 DEFAULTS = {
-    'rom.source': 'roms/', 'ssh.host': '192.168.69.53', 'ssh.port': '22',
-    'ssh.username': 'root', 'ssh.remote_dir': '/var/mobile/Media/ROMs/MAME4iOS/roms/',
+    'content.mode': 'roms', 'rom.source': 'roms/', 'samples.source': 'samples/',
+    'ssh.host': '192.168.69.53', 'ssh.port': '22', 'ssh.username': 'root',
+    'ssh.remote_dir': '/var/mobile/Media/ROMs/MAME4iOS/roms/',
+    'samples.remote_dir': '/var/mobile/Media/ROMs/MAME4iOS/samples/',
     'ssh.auth_mode': 'password', 'ssh.private_key': '', 'ssh.password': '',
     'ssh.key_passphrase': '', 'ssh.legacy_rsa': 'true',
     'ssh.save_credentials': 'false', 'ssh.remote_listing_mode': 'ssh',
@@ -33,6 +35,14 @@ def local(value):
     return (path if path.is_absolute() else BASE / path).resolve()
 
 
+def active_keys(mode):
+    if mode == 'roms':
+        return 'rom.source', 'ssh.remote_dir'
+    if mode == 'samples':
+        return 'samples.source', 'samples.remote_dir'
+    raise ValueError('Select roms or samples.')
+
+
 def atomic_write(path, text):
     temporary = path.with_suffix(path.suffix + '.tmp')
     temporary.write_text(text, encoding='utf-8')
@@ -42,7 +52,7 @@ def atomic_write(path, text):
 class App:
     def __init__(self, root):
         self.root = root
-        root.title('MAME Selector - SSH / SCP')
+        root.title('MAME Selector - ROMs / Samples - SSH / SCP')
         root.geometry('1450x950')
         root.minsize(1100, 760)
         values = DEFAULTS.copy()
@@ -60,7 +70,8 @@ class App:
         if values['ssh.save_credentials'] != 'true':
             self.v['ssh.password'].set('')
             self.v['ssh.key_passphrase'].set('')
-        for key, allowed in [('ssh.auth_mode', ('password', 'key')),
+        for key, allowed in [('content.mode', ('roms', 'samples')),
+                             ('ssh.auth_mode', ('password', 'key')),
                              ('ssh.remote_listing_mode', ('ssh', 'sftp'))]:
             if self.v[key].get() not in allowed:
                 self.v[key].set(DEFAULTS[key])
@@ -76,15 +87,44 @@ class App:
         self.count, self.remote_count = tk.StringVar(), tk.StringVar()
         self.status, self.pages = tk.StringVar(value='Ready'), tk.StringVar()
         self.build()
-        for key in ('ssh.host', 'ssh.port', 'ssh.username', 'ssh.remote_dir', 'ssh.remote_listing_mode'):
+        for key in ('ssh.host', 'ssh.port', 'ssh.username', 'ssh.remote_dir',
+                    'samples.remote_dir', 'ssh.remote_listing_mode'):
             self.v[key].trace_add('write', self.invalidate_remote)
+        self.v['content.mode'].trace_add('write', self.mode_changed)
         self.search.trace_add('write', self.schedule_filter)
         self.remote_search.trace_add('write', lambda *args: self.render_remote())
         self.auth_state()
+        self.update_titles()
         self.load()
         self.render_remote()
         root.protocol('WM_DELETE_WINDOW', self.close)
         root.after(100, self.poll)
+
+    def source_key(self):
+        return active_keys(self.v['content.mode'].get())[0]
+
+    def update_titles(self):
+        label = 'Samples' if self.v['content.mode'].get() == 'samples' else 'ROMs'
+        self.local_panel.configure(text=f'Local {label}')
+        self.remote_panel.configure(text=f'Remote {label}')
+
+    def cancel_filter(self):
+        if self.job is not None:
+            self.root.after_cancel(self.job)
+            self.job = None
+
+    def mode_changed(self, *args):
+        self.cancel_filter()
+        self.marks.clear()
+        self.roms, self.filtered = [], []
+        self.loaded, self.page = None, 0
+        self.search.set('')
+        self.cancel_filter()
+        self.remote_search.set('')
+        self.invalidate_remote()
+        self.update_titles()
+        self.render()
+        self.load()
 
     def build(self):
         menu = tk.Menu(self.root)
@@ -94,16 +134,19 @@ class App:
         config.pack(fill='x', padx=10, pady=10)
         config.columnconfigure(1, weight=1)
         self.entries = {}
-        labels = [('Source:', 'rom.source'), ('SSH host / IP:', 'ssh.host'),
+        labels = [('Content:', 'content.mode'), ('ROM source:', 'rom.source'),
+                  ('Samples source:', 'samples.source'), ('SSH host / IP:', 'ssh.host'),
                   ('SSH port:', 'ssh.port'), ('User:', 'ssh.username'),
-                  ('Remote folder:', 'ssh.remote_dir'), ('Authentication:', 'ssh.auth_mode'),
-                  ('Password:', 'ssh.password'), ('Private key:', 'ssh.private_key'),
-                  ('Key passphrase:', 'ssh.key_passphrase'), ('Remote listing:', 'ssh.remote_listing_mode')]
+                  ('Remote ROMs:', 'ssh.remote_dir'), ('Remote samples:', 'samples.remote_dir'),
+                  ('Authentication:', 'ssh.auth_mode'), ('Password:', 'ssh.password'),
+                  ('Private key:', 'ssh.private_key'), ('Key passphrase:', 'ssh.key_passphrase'),
+                  ('Remote listing:', 'ssh.remote_listing_mode')]
+        choices = {'content.mode': ('roms', 'samples'), 'ssh.auth_mode': ('password', 'key'),
+                   'ssh.remote_listing_mode': ('ssh', 'sftp')}
         for row, (label, key) in enumerate(labels):
             ttk.Label(config, text=label).grid(row=row, column=0, sticky='w', padx=8, pady=2)
-            if key in ('ssh.auth_mode', 'ssh.remote_listing_mode'):
-                options = ('password', 'key') if key == 'ssh.auth_mode' else ('ssh', 'sftp')
-                widget = ttk.Combobox(config, textvariable=self.v[key], values=options, state='readonly')
+            if key in choices:
+                widget = ttk.Combobox(config, textvariable=self.v[key], values=choices[key], state='readonly')
                 self.combos.append(widget)
                 if key == 'ssh.auth_mode':
                     widget.bind('<<ComboboxSelected>>', lambda event: self.auth_state())
@@ -113,23 +156,28 @@ class App:
                 self.settings.append(widget)
             widget.grid(row=row, column=1, sticky='ew', pady=2)
             self.entries[key] = widget
-        self.entries['rom.source'].bind('<Return>', lambda event: self.load())
-        for row, column, label, command in [(0, 2, 'Browse...', self.browse_source),
-                (0, 3, 'Load', self.load), (7, 2, 'Browse...', self.browse_key), (11, 3, 'Save', self.save)]:
+            if key in ('rom.source', 'samples.source'):
+                widget.bind('<Return>', lambda event: self.load())
+                button = ttk.Button(config, text='Browse...', command=lambda k=key: self.browse_source(k))
+                button.grid(row=row, column=2, padx=8)
+                self.settings.append(button)
+        for row, column, label, command in [(0, 3, 'Load', self.load),
+                (10, 2, 'Browse...', self.browse_key), (14, 3, 'Save', self.save)]:
             button = ttk.Button(config, text=label, command=command)
             button.grid(row=row, column=column, padx=8)
             self.settings.append(button)
-            if row == 7:
+            if row == 10:
                 self.key_browse = button
-        for row, key, label in [(10, 'ssh.legacy_rsa', 'Allow legacy SSH RSA (SHA-1)'),
-                (11, 'ssh.save_credentials', 'Save credentials in .properties (plain text)')]:
+        for row, key, label in [(13, 'ssh.legacy_rsa', 'Allow legacy SSH RSA (SHA-1)'),
+                (14, 'ssh.save_credentials', 'Save credentials in .properties (plain text)')]:
             check = ttk.Checkbutton(config, text=label, variable=self.v[key], onvalue='true', offvalue='false')
             check.grid(row=row, column=1, sticky='w')
             self.settings.append(check)
-        ttk.Label(config, text='ssh: POSIX shell / sftp: SFTP subsystem').grid(row=9, column=2, columnspan=2)
+        ttk.Label(config, text='ssh: POSIX shell / sftp: SFTP subsystem').grid(row=12, column=2, columnspan=2)
         split = ttk.Panedwindow(self.root, orient='horizontal')
         split.pack(fill='both', expand=True, padx=10)
-        left, right = ttk.LabelFrame(split, text='Local collection'), ttk.LabelFrame(split, text='Remote ROMs')
+        left, right = ttk.LabelFrame(split), ttk.LabelFrame(split)
+        self.local_panel, self.remote_panel = left, right
         split.add(left, weight=3)
         split.add(right, weight=2)
         for panel, variable in ((left, self.search), (right, self.remote_search)):
@@ -208,15 +256,19 @@ class App:
         self.auth_state()
         self.update_marks()
 
-    def browse_source(self):
+    def browse_source(self, key=None):
+        if self.busy:
+            return
+        key = key or self.source_key()
         name = filedialog.askdirectory(initialdir=str(BASE))
         if name:
             try:
                 value = Path(name).resolve().relative_to(BASE).as_posix()
             except ValueError:
                 value = name
-            self.v['rom.source'].set(value)
-            self.load()
+            self.v[key].set(value)
+            if key == self.source_key():
+                self.load()
 
     def browse_key(self):
         name = filedialog.askopenfilename(title='Select private key')
@@ -225,26 +277,30 @@ class App:
 
     def values(self):
         values = {key: var.get() for key, var in self.v.items()}
-        for key in ('rom.source', 'ssh.host', 'ssh.port', 'ssh.username', 'ssh.remote_dir', 'ssh.private_key'):
+        for key in ('rom.source', 'samples.source', 'ssh.host', 'ssh.port', 'ssh.username',
+                    'ssh.remote_dir', 'samples.remote_dir', 'ssh.private_key'):
             values[key] = values[key].strip()
-        if any('\n' in value or '\r' in value for value in values.values()):
-            raise ValueError('Values cannot contain line breaks.')
-        if not values['rom.source'] or not local(values['rom.source']).is_dir():
-            raise ValueError('Select an existing source directory.')
+        if any('\n' in value or '\r' in value or '\0' in value for value in values.values()):
+            raise ValueError('Values cannot contain line breaks or NUL characters.')
+        source_key, remote_key = active_keys(values['content.mode'])
+        if not values[source_key] or not local(values[source_key]).is_dir():
+            raise ValueError(f"Select an existing {values['content.mode']} source directory.")
         if not values['ssh.host'] or not values['ssh.username']:
             raise ValueError('Enter host and username.')
         port = int(values['ssh.port'])
         if not 1 <= port <= 65535:
             raise ValueError('Invalid SSH port.')
         values['ssh.port'] = str(port)
-        if not values['ssh.remote_dir'].startswith('/'):
-            raise ValueError('Use an absolute remote directory.')
+        if not values[remote_key].startswith('/'):
+            raise ValueError('Use an absolute remote directory for the selected content.')
         if values['ssh.auth_mode'] not in ('password', 'key') or values['ssh.remote_listing_mode'] not in ('ssh', 'sftp'):
             raise ValueError('Invalid mode.')
         if values['ssh.auth_mode'] == 'key':
             path = local(values['ssh.private_key'])
             if not values['ssh.private_key'] or not path.is_file() or path.suffix.lower() == '.pub':
                 raise ValueError('Select an existing private key, not a .pub file.')
+        values['operation.source'] = values[source_key]
+        values['operation.remote_dir'] = values[remote_key]
         return values
 
     def save(self):
@@ -264,29 +320,31 @@ class App:
     def load(self):
         if self.busy:
             return
+        self.cancel_filter()
         try:
-            text = self.v['rom.source'].get().strip()
+            text = self.v[self.source_key()].get().strip()
             directory = local(text)
             if not text or not directory.is_dir():
-                raise ValueError(f'ROM directory not found:\n{directory}')
+                raise ValueError(f'Source directory not found:\n{directory}')
             roms = sorted((path for path in directory.iterdir() if path.is_file() and path.suffix.lower() == '.zip'),
                           key=lambda path: path.name.casefold())
         except (OSError, ValueError) as error:
-            messagebox.showerror('Source error', str(error))
+            self.roms, self.filtered = [], []
+            self.marks.clear()
+            self.loaded = None
+            self.page = 0
             self.render()
+            messagebox.showerror('Source error', str(error))
             return
         if directory != self.loaded:
             self.marks.clear()
         self.loaded, self.roms = directory, roms
         self.marks.intersection_update(roms)
-        if self.job is not None:
-            self.root.after_cancel(self.job)
         self.filter()
-        self.status.set(f'Loaded {len(roms)} local games.')
+        self.status.set(f"Loaded {len(roms)} local {self.v['content.mode'].get()} ZIPs.")
 
     def schedule_filter(self, *args):
-        if self.job is not None:
-            self.root.after_cancel(self.job)
+        self.cancel_filter()
         self.job = self.root.after(200, self.filter)
 
     def filter(self):
@@ -313,7 +371,7 @@ class App:
             self.grid.columnconfigure(column, weight=1)
         visible = self.filtered[self.page * PAGE_SIZE:(self.page + 1) * PAGE_SIZE]
         if not visible:
-            ttk.Label(self.grid, text='No matching games.', padding=20).grid(row=0, column=0, columnspan=4)
+            ttk.Label(self.grid, text='No matching ZIPs.', padding=20).grid(row=0, column=0, columnspan=4)
         for index, path in enumerate(visible):
             try:
                 with Image.open(path.with_suffix('.png')) as source:
@@ -321,7 +379,8 @@ class App:
                     image.thumbnail((150, 110), Image.Resampling.LANCZOS)
             except (OSError, ValueError):
                 image = Image.new('RGBA', (150, 110), '#ddd')
-                ImageDraw.Draw(image).text((40, 45), 'No image', fill='#555')
+                label = 'Samples' if self.v['content.mode'].get() == 'samples' else 'No image'
+                ImageDraw.Draw(image).text((40, 45), label, fill='#555')
             background = Image.new('RGBA', (150, 110), '#eee')
             background.alpha_composite(image, ((150 - image.width) // 2, (110 - image.height) // 2))
             photo = ImageTk.PhotoImage(background.convert('RGB'))
@@ -371,7 +430,7 @@ class App:
 
     def update_marks(self):
         hidden = len(self.marks.difference(self.filtered))
-        self.count.set(f'{len(self.filtered)} / {len(self.roms)} games | {len(self.marks)} selected ({hidden} outside filter)')
+        self.count.set(f'{len(self.filtered)} / {len(self.roms)} ZIPs | {len(self.marks)} selected ({hidden} outside filter)')
         self.copy_button.configure(text=f'Copy selected ({len(self.marks)})',
                                    state='normal' if self.marks and not self.busy else 'disabled')
         valid = self.remote_target is not None and self.remote_target == self.signature()
@@ -389,8 +448,10 @@ class App:
         self.render()
 
     def signature(self):
-        return tuple(self.v[key].get().strip() for key in
-                     ('ssh.host', 'ssh.port', 'ssh.username', 'ssh.remote_dir', 'ssh.remote_listing_mode'))
+        mode = self.v['content.mode'].get()
+        remote_key = active_keys(mode)[1]
+        return (mode,) + tuple(self.v[key].get().strip() for key in
+                     ('ssh.host', 'ssh.port', 'ssh.username', remote_key, 'ssh.remote_listing_mode'))
 
     def invalidate_remote(self, *args):
         self.remote, self.remote_target = [], None
@@ -473,7 +534,7 @@ class App:
         return await asyncssh.connect(**options)
 
     async def list_async(self, values):
-        directory = values['ssh.remote_dir']
+        directory = values['operation.remote_dir']
         async with await self.connect(values) as connection:
             if values['ssh.remote_listing_mode'] == 'sftp':
                 result = []
@@ -538,7 +599,7 @@ class App:
             return
         try:
             values = self.values()
-            if local(values['rom.source']) != self.loaded:
+            if local(values['operation.source']) != self.loaded:
                 raise ValueError('Source changed. Click Load first.')
             files = sorted(self.marks, key=lambda path: path.name.casefold())
             if any(not path.is_file() for path in files):
@@ -572,16 +633,23 @@ class App:
         warning = ('Permanent remote deletion. Local files are not modified.\n'
                    'BIOS and parent ZIPs may be required by other games.' if deleting
                    else 'Existing remote files may be overwritten.')
-        text = (f"{action} {len(files)} files\nServer: {values['ssh.username']}@{values['ssh.host']}\n"
-                f"Port: {values['ssh.port']}\nDirectory: {values['ssh.remote_dir']}\n\n{warning}\n"
+        text = (f"Content: {values['content.mode']}\n{action} {len(files)} files\n"
+                f"Server: {values['ssh.username']}@{values['ssh.host']}\n"
+                f"Port: {values['ssh.port']}\nDirectory: {values['operation.remote_dir']}\n\n{warning}\n"
                 'Includes marks outside the current filter.\n\n' +
                 '\n'.join(item if deleting else str(item) for item in files))
-        if not self.report('Confirm batch operation', text, action):
-            return
         self.set_busy(True)
+        try:
+            accepted = self.report('Confirm batch operation', text, action)
+        except Exception:
+            self.set_busy(False)
+            raise
+        if not accepted:
+            self.set_busy(False)
+            return
         self.progress['value'] = 0
         self.status.set('Connecting...')
-        threading.Thread(target=self.batch_worker, args=(files, values, deleting), daemon=True).start()
+        threading.Thread(target=self.batch_worker, args=(tuple(files), dict(values), deleting), daemon=True).start()
 
     async def batch_async(self, files, values, deleting, result):
         async with await self.connect(values) as connection:
@@ -598,7 +666,7 @@ class App:
                             self.events.put(('progress', index, len(files), name, percent, False))
                     try:
                         if deleting:
-                            path = posixpath.join(values['ssh.remote_dir'], name)
+                            path = posixpath.join(values['operation.remote_dir'], name)
                             if sftp:
                                 attrs = await asyncio.wait_for(sftp.lstat(path), 30)
                                 if not self.regular(attrs):
@@ -610,7 +678,7 @@ class App:
                                     f'|| {{ printf "%s\\n" "Not a regular file or is a symlink" >&2; exit 1; }}; rm {quoted}')
                                 await connection.run(command, check=True, timeout=30)
                         else:
-                            await asyncio.wait_for(asyncssh.scp(item, (connection, values['ssh.remote_dir'].rstrip('/') + '/'),
+                            await asyncio.wait_for(asyncssh.scp(item, (connection, values['operation.remote_dir'].rstrip('/') + '/'),
                                                                progress_handler=progress), 600)
                         result['completed'].append(item)
                         self.events.put(('completed', item, deleting))

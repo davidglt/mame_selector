@@ -27,6 +27,8 @@ DEFAULTS = {
     'ssh.key_passphrase': '', 'ssh.legacy_rsa': 'true',
     'ssh.save_credentials': 'false', 'ssh.remote_listing_mode': 'ssh',
 }
+CONNECTION_KEYS = ('ssh.host', 'ssh.port', 'ssh.username', 'ssh.auth_mode', 'ssh.password',
+                   'ssh.private_key', 'ssh.key_passphrase', 'ssh.legacy_rsa')
 PAGE_SIZE = 40
 
 
@@ -298,32 +300,37 @@ class App:
         if name:
             self.v['ssh.private_key'].set(name)
 
-    def values(self):
+    def values(self, terminal=False):
         values = {key: var.get() for key, var in self.v.items()}
         for key in ('rom.source', 'samples.source', 'ssh.host', 'ssh.port', 'ssh.username',
                     'ssh.remote_dir', 'samples.remote_dir', 'ssh.private_key'):
             values[key] = values[key].strip()
+        if terminal:
+            values = {key: values[key] for key in CONNECTION_KEYS}
         if any('\n' in value or '\r' in value or '\0' in value for value in values.values()):
             raise ValueError('Values cannot contain line breaks or NUL characters.')
-        source_key, remote_key = active_keys(values['content.mode'])
-        if not values[source_key] or not local(values[source_key]).is_dir():
-            raise ValueError(f"Select an existing {values['content.mode']} source directory.")
+        if not terminal:
+            source_key, remote_key = active_keys(values['content.mode'])
+            if not values[source_key] or not local(values[source_key]).is_dir():
+                raise ValueError(f"Select an existing {values['content.mode']} source directory.")
         if not values['ssh.host'] or not values['ssh.username']:
             raise ValueError('Enter host and username.')
         port = int(values['ssh.port'])
         if not 1 <= port <= 65535:
             raise ValueError('Invalid SSH port.')
         values['ssh.port'] = str(port)
-        if not values[remote_key].startswith('/'):
+        if not terminal and not values[remote_key].startswith('/'):
             raise ValueError('Use an absolute remote directory for the selected content.')
-        if values['ssh.auth_mode'] not in ('password', 'key') or values['ssh.remote_listing_mode'] not in ('ssh', 'sftp'):
+        if values['ssh.auth_mode'] not in ('password', 'key') or (
+                not terminal and values['ssh.remote_listing_mode'] not in ('ssh', 'sftp')):
             raise ValueError('Invalid mode.')
         if values['ssh.auth_mode'] == 'key':
             path = local(values['ssh.private_key'])
             if not values['ssh.private_key'] or not path.is_file() or path.suffix.lower() == '.pub':
                 raise ValueError('Select an existing private key, not a .pub file.')
-        values['operation.source'] = values[source_key]
-        values['operation.remote_dir'] = values[remote_key]
+        if not terminal:
+            values['operation.source'] = values[source_key]
+            values['operation.remote_dir'] = values[remote_key]
         return values
 
     def save(self):

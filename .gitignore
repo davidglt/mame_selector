@@ -6,8 +6,9 @@ venv/
 build/
 dist/
 *.egg-info/
-# Local ROM collection
+# Local ROM and sample collections
 /roms/
+/samples/
 # Local configuration and server identities
 mame_selector.properties
 mame_selector.properties.tmp

@@ -11,7 +11,7 @@ The ROMs/Samples update has not been runtime tested. The graphical interface and
 ## Requirements
 
 - Python with Tkinter.
-- Dependencies listed in `requirements.txt`: Pillow and AsyncSSH.
+- Dependencies listed in `requirements.txt`: Pillow, AsyncSSH and pyte (terminal emulation).
 - A reachable SSH server and valid credentials.
 - Existing local source and remote destination directories for the selected mode.
 - SCP support for copying; SFTP or a compatible POSIX shell for listing and deletion.
@@ -214,11 +214,39 @@ Verify a new server fingerprint through a trusted channel before accepting it. A
 
 OpenSSH `known_hosts` is not imported automatically. Do not remove saved keys merely to bypass a warning; first verify whether the server was legitimately reinstalled or its identity changed.
 
+## SSH terminal
+
+Click `>_ SSH terminal` in the Configuration panel to open a separate interactive terminal window on the configured server. It uses the same AsyncSSH connection code as the file operations (no external `ssh` executable), so no second SSH-password prompt appears when valid credentials are already entered. The first connection to an unknown server still shows the explicit host-key trust prompt, and changed server keys are rejected. Remote prompts such as `sudo` or `su` are not suppressed or answered automatically.
+
+- The host, port, user, authentication mode, password, key path, key passphrase and legacy-RSA setting are copied when the window opens and stay fixed for that session.
+- Local ROM/sample folders and remote directories are not needed and are not used. No `cd` or any other command is run automatically.
+- A real remote PTY is requested with `TERM=vt100`. Screen state is emulated with pyte and drawn in Tkinter: cursor addressing, erase operations, scrolling regions, bold/underline/reverse, basic colors, DEC line-drawing characters, application cursor keys, and device/cursor-position replies. Alternate-screen modes (`?47`, `?1047`, `?1049`) and bracketed paste (`?2004`) are also implemented. The remote PTY size follows the window size.
+- Keys: printable characters (character at a time, no local echo), Enter, Backspace (sends DEL), Tab, Shift+Tab, Escape, arrows, Home/End/PageUp/PageDown/Insert/Delete, F1-F12, Alt+key (ESC prefix) and Ctrl+letter and other control characters. Ctrl+C, Ctrl+D, Ctrl+Z and Ctrl+V go to the remote side unchanged.
+- Copy and paste: select text with the mouse and use the `Copy` button or Ctrl+Shift+C; paste with the `Paste` button or Ctrl+Shift+V. Pasting several lines asks for confirmation first, because the text may execute remote commands. Control characters (including Escape) are removed from pasted text. Bracketed paste is used only if the remote application enabled it. A redraw of a selected line clears the selection.
+- `Disconnect` ends the session; after the session ends the button becomes `Close`. Closing the window also disconnects. The main window cannot be closed while a session is active.
+- While a terminal session is active, file operations, `Save` and configuration edits are disabled (this initial implementation serializes them to avoid concurrent host-registry writes). When the session ends the remote listing is invalidated, because console commands may have changed remote files; click `Refresh` to reload it. Local selections are not modified.
+- Credentials are never put in process arguments, logs or extra settings files.
+
+Not supported: mouse reporting, scrollback, 256-color/truecolor terminal types, italics/blink, window-title changes, multiple concurrent terminals, SSH agent/X11/port forwarding, and non-UTF-8 remote locales. This is a VT100-level terminal, not a universal terminal emulator; applications that require a richer terminal type may render incorrectly.
+
+### Smoke test
+
+Use an expendable file and a test server first.
+
+1. Open `>_ SSH terminal`; confirm the prompt appears without asking for the SSH password again.
+2. Run `vi /tmp/mame_selector_test.txt`, press `i`, type text, press Escape, type `:wq` and Enter. Check the file with `cat`.
+3. Run `top`; check that it refreshes, then press `q`.
+4. Resize the window and run `stty size`; it should match the window.
+5. Run `sleep 100` and press Ctrl+C.
+6. Click `Disconnect`; confirm the main window re-enables its controls and `Refresh` is needed again.
+
+Live vi/top behavior on the author's device has not been verified.
+
 ## Project files
 
 | File | Purpose |
 | --- | --- |
-| `mame_selector.py` | Single application file, including ROMs/Samples mode switching and both panels. |
+| `mame_selector.py` | Single application file, including ROMs/Samples mode switching, both panels and the SSH terminal. |
 | `mame_selector.cmd` | Unchanged Windows launcher for `mame_selector.py`. |
 | `requirements.txt` | Python dependencies. |
 | `mame_selector.properties.example` | Credential-free configuration template for both modes. |
@@ -244,6 +272,8 @@ Install with the same interpreter used by the launcher:
 ```
 
 If you do not use `.venv`, use `python -m pip install -r requirements.txt`.
+
+When updating an existing installation, run the same command again to install the new `pyte` dependency (or `python -m pip install "pyte>=0.8.2"`).
 
 ### No local ZIPs appear
 

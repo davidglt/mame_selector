@@ -1,2 +1,3 @@
 Pillow>=10
 asyncssh>=2.14
+pyte>=0.8.2

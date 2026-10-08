@@ -6,7 +6,7 @@ Browse a local collection, select multiple ZIP files, transfer them over SCP, an
 
 ## Project status
 
-The MAME/SNES profile update has not been runtime tested with the graphical interface or a live device. The graphical interface and live device compatibility have not been verified. Test with expendable files before using remote deletion on your collection.
+The MAME/SNES profile update has not been runtime tested. The graphical interface and live device compatibility have not been verified. Test with expendable files before using remote deletion on your collection.
 
 ## Requirements
 

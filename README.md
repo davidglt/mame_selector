@@ -1,12 +1,26 @@
-# MAME Selector
+# Retro Selector
 
-Desktop MAME ROM and sample browser and remote ZIP manager built with Python, Tkinter, Pillow, and AsyncSSH.
+Formerly MAME Selector. The intended repository name is `retro_selector`; the GitHub repository rename is a separate administrative action that this change does not perform, so current repository links keep working.
 
-Browse a local collection, select multiple ZIP files, transfer them over SCP, and list or delete selected remote ZIPs over SSH. Switch between MAME (ROMs/Samples) and SNES profiles in the same application: all functionality remains in `mame_selector.py`, with no second Python program.
+Desktop MAME and SNES ROM and sample browser and remote ZIP manager built with Python, Tkinter, Pillow, and AsyncSSH.
+
+Browse a local collection, select multiple ZIP files, transfer them over SCP, and list or delete selected remote ZIPs over SSH. Switch between MAME (ROMs/Samples) and SNES profiles in the same application: all functionality remains in `retro_selector.py`, with no second Python program.
 
 ## Project status
 
 The MAME/SNES profile update has not been runtime tested. The graphical interface and live device compatibility have not been verified. Test with expendable files before using remote deletion on your collection.
+
+## Example setup
+
+This is the author's example setup, not tested compatibility or a guarantee for any other device or version:
+
+- an iPad 2 running iOS 6.1.3 with a jailbreak, reachable over SSH;
+- an iCade controller;
+- the MAME profile, with local ROMs in `roms_mame/` by default and your existing configured remote MAME ROM destination (preserved as is; this documentation does not assume a value);
+- the SNES profile, with local ROMs in `roms_snes/` by default and the remote destination `/var/mobile/Media/ROMs/Snes9xEX/roms/`;
+- samples exist only for MAME.
+
+The desktop application browses and transfers ROMs and offers SSH terminal access. It does not install emulators, jailbreak devices or configure the iCade. Emulator versions, jailbreak method, controller mappings and server details are outside its scope; enter your own host and credentials in the interface. The example properties file keeps credentials empty.
 
 ## Requirements
 
@@ -24,12 +38,12 @@ Place the application files in your collection's parent directory. For the origi
 
 ```text
 D:\MAME0.139RomCollectionByGhostware\
-├── mame_selector.py
-├── mame_selector.cmd
+├── retro_selector.py
+├── retro_selector.cmd
 ├── requirements.txt
 ├── README.md
 ├── LICENSE
-├── mame_selector.properties.example
+├── retro_selector.properties.example
 ├── roms_mame\
 │   ├── galaxian.zip
 │   ├── galaxian.png
@@ -47,7 +61,7 @@ From Windows CMD:
 cd /d D:\MAME0.139RomCollectionByGhostware
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
-mame_selector.cmd
+retro_selector.cmd
 ```
 
 The launcher uses `.venv\Scripts\python.exe` when available, otherwise `python` from `PATH`. It does not require manual virtual-environment activation.
@@ -55,12 +69,12 @@ The launcher uses `.venv\Scripts\python.exe` when available, otherwise `python` 
 Alternatively, run directly:
 
 ```cmd
-.venv\Scripts\python.exe mame_selector.py
+.venv\Scripts\python.exe retro_selector.py
 ```
 
 ## Quick start
 
-1. Run `mame_selector.cmd`.
+1. Run `retro_selector.cmd`.
 2. Choose `mame` or `snes` in `Emulator` (and `roms` or `samples` in `MAME content` for MAME).
 3. Check the matching local source and click `Load` if you have edited its path.
 4. Enter the SSH host, port, username, and credentials; check the matching remote destination.
@@ -106,15 +120,25 @@ Switching is blocked while an operation, batch confirmation or the SSH terminal 
 
 If the selected source does not exist, the application reports an error and leaves the local panel empty. Local and remote directories are not created automatically.
 
+### Rename migration (MAME Selector to Retro Selector)
+
+The application is now `retro_selector.py` (launcher `retro_selector.cmd`) and uses `retro_selector.properties`:
+
+- If `retro_selector.properties` exists, it is the only file loaded; legacy values never overwrite it.
+- If it does not exist but the legacy `mame_selector.properties` does, the legacy file is loaded in full (credentials if they were saved, MAME paths, samples, profiles and terminal settings).
+- An explicit `Save` writes `retro_selector.properties`. The legacy file is never modified or deleted automatically; remove it yourself when you no longer need it.
+- Trusted server keys follow the same rule: `retro_selector_host_keys.json` is used if present, otherwise the legacy `mame_selector_host_keys.json` is read; new approvals are written to the new file.
+- Update shortcuts or scripts that call `mame_selector.py` or `mame_selector.cmd`.
+
 ### Existing configuration files
 
-Old `mame_selector.properties` files remain supported. Existing `rom.source`, `ssh.remote_dir`, `samples.source`, `samples.remote_dir` and `content.mode` settings stay MAME settings and are not replaced by SNES values. Missing keys use defaults: `emulator.active=mame`, `snes.rom.source=roms_snes/` and `snes.remote_dir=/var/mobile/Media/ROMs/Snes9xEX/roms/`. A legacy file (without `emulator.active` or `snes.*` keys) that lacks `rom.source` keeps the previous `roms/` value for MAME; the new `roms_mame/` default applies only when there is no configuration file. A file without `terminal.scrollback_lines` uses the default `10000`.
+Old configuration files remain supported (see the rename migration below). Existing `rom.source`, `ssh.remote_dir`, `samples.source`, `samples.remote_dir` and `content.mode` settings stay MAME settings and are not replaced by SNES values. Missing keys use defaults: `emulator.active=mame`, `snes.rom.source=roms_snes/` and `snes.remote_dir=/var/mobile/Media/ROMs/Snes9xEX/roms/`. A legacy file (without `emulator.active` or `snes.*` keys) that lacks `rom.source` keeps the previous `roms/` value for MAME; the new `roms_mame/` default applies only when there is no configuration file. A file without `terminal.scrollback_lines` uses the default `10000`.
 
 Clicking `Save` writes all settings (both profiles and the active emulator). Internal operation snapshots are not written. The example file has empty credentials; you do not need to replace your local configuration with it.
 
 ## Local collections
 
-Relative local sources are resolved against the directory containing `mame_selector.py`, not the current CMD working directory. Absolute source paths are also supported. Relative private-key paths use the same base directory.
+Relative local sources are resolved against the directory containing `retro_selector.py`, not the current CMD working directory. Absolute source paths are also supported. Relative private-key paths use the same base directory.
 
 Place optional PNG thumbnails beside their corresponding ROM files, with the same filename stem:
 
@@ -208,11 +232,11 @@ For key authentication, select the local private key, not its `.pub` file. Its c
 
 `Allow legacy SSH RSA (SHA-1)` permits `ssh-rsa` signatures. It does not enable every obsolete cipher or key-exchange algorithm. The initial defaults target the author's legacy device; change them for other servers and disable legacy compatibility when unnecessary.
 
-Click `Save` to write `mame_selector.properties` next to the script. The file loads on startup; missing settings use defaults. Saving does not initiate a transfer.
+Click `Save` to write `retro_selector.properties` next to the script. The file loads on startup; missing settings use defaults. Saving does not initiate a transfer.
 
 The parser uses UTF-8 and literal `key=value` lines, splitting at the first equals sign. Windows backslashes do not require escaping. Relative local paths remain relative when saved. Lines beginning with `#` or `!` are comments.
 
-Use `mame_selector.properties.example` as a credential-free template.
+Use `retro_selector.properties.example` as a credential-free template.
 
 ### Credential storage
 
@@ -222,7 +246,7 @@ Clearing the option and clicking `Save` erases stored credentials without cleari
 
 ### Server identity
 
-Verify a new server fingerprint through a trusted channel before accepting it. Approved public keys are stored in `mame_selector_host_keys.json` and pinned on the authenticated connection. Changed keys are rejected.
+Verify a new server fingerprint through a trusted channel before accepting it. Approved public keys are stored in `retro_selector_host_keys.json` (a legacy `mame_selector_host_keys.json` is read if the new file is absent) and pinned on the authenticated connection. Changed keys are rejected.
 
 OpenSSH `known_hosts` is not imported automatically. Do not remove saved keys merely to bypass a warning; first verify whether the server was legitimately reinstalled or its identity changed.
 
@@ -237,7 +261,7 @@ Click `>_ SSH terminal` in the Configuration panel to open a separate interactiv
 - Copy and paste: select text with the mouse and use the `Copy` button or Ctrl+Shift+C; paste with the `Paste` button or Ctrl+Shift+V. Pasting several lines asks for confirmation first, because the text may execute remote commands. Control characters (including Escape) are removed from pasted text. Bracketed paste is used only if the remote application enabled it. A redraw of a selected line clears the selection.
 - `Disconnect` ends the session; after the session ends the button becomes `Close`. Closing the window also disconnects. The main window cannot be closed while a session is active.
 - While a terminal session is active, file operations, `Save` and configuration edits are disabled (this initial implementation serializes them to avoid concurrent host-registry writes). When the session ends the remote listing is invalidated, because console commands may have changed remote files; click `Refresh` to reload it. Local selections are not modified.
-- Scrollback: the terminal window has a vertical scrollbar and responds to the mouse wheel (3 lines per notch). Scrolling is purely local; no keys or escape sequences are sent to the remote side. The setting `Terminal scrollback lines` (`terminal.scrollback_lines` in `mame_selector.properties`, default `10000`) is the number of completed lines retained after they scroll off the top of the main screen; the visible rows are not counted and the remote PTY size never includes history or the scrollbar. The value must be a positive base-10 integer (`1`, `250`, `10000`); zero, negative, fractional, empty, malformed values, line breaks and NUL are rejected with an error before `Save` or terminal launch. There is no arbitrary upper limit other than the platform's maximum integer, but memory grows with the number of retained lines, so choose a value your computer can hold (a typical 80-column line needs on the order of a few hundred bytes).
+- Scrollback: the terminal window has a vertical scrollbar and responds to the mouse wheel (3 lines per notch). Scrolling is purely local; no keys or escape sequences are sent to the remote side. The setting `Terminal scrollback lines` (`terminal.scrollback_lines` in `retro_selector.properties`, default `10000`) is the number of completed lines retained after they scroll off the top of the main screen; the visible rows are not counted and the remote PTY size never includes history or the scrollbar. The value must be a positive base-10 integer (`1`, `250`, `10000`); zero, negative, fractional, empty, malformed values, line breaks and NUL are rejected with an error before `Save` or terminal launch. There is no arbitrary upper limit other than the platform's maximum integer, but memory grows with the number of retained lines, so choose a value your computer can hold (a typical 80-column line needs on the order of a few hundred bytes).
 - Following versus reading: at the bottom the view follows new output. After you scroll up, the lines you are reading stay in place while output arrives; when the oldest lines are discarded once the limit is exceeded, the view is clamped to the oldest retained line. Typing a key that is sent to the remote side, or pasting, returns to the live bottom; mouse-wheel, scrollbar, `Copy` and Ctrl+Shift+C do not. The cursor is hidden while browsing history. After the session ends the retained history can still be scrolled and read.
 - Alternate-screen applications (`vi`, `vim`, `top`, `less`, using `?47`, `?1047` or `?1049`) are kept separate: their frames are never added to the history, the live screen is always shown, and the scrollbar and wheel are disabled (the wheel does nothing) until the application exits, when the previous screen and history are restored.
 - Credentials are never put in process arguments, logs or extra settings files.
@@ -251,7 +275,7 @@ Not supported: mouse reporting, 256-color/truecolor terminal types, italics/blin
 Use an expendable file and a test server first.
 
 1. Open `>_ SSH terminal`; confirm the prompt appears without asking for the SSH password again.
-2. Run `vi /tmp/mame_selector_test.txt`, press `i`, type text, press Escape, type `:wq` and Enter. Check the file with `cat`.
+2. Run `vi /tmp/retro_selector_test.txt`, press `i`, type text, press Escape, type `:wq` and Enter. Check the file with `cat`.
 3. Run `top`; check that it refreshes, then press `q`.
 4. Resize the window and run `stty size`; it should match the window.
 5. Run `sleep 100` and press Ctrl+C.
@@ -264,10 +288,10 @@ Live vi/top behavior on the author's device has not been verified.
 
 | File | Purpose |
 | --- | --- |
-| `mame_selector.py` | Single application file, including ROMs/Samples mode switching, both panels and the SSH terminal. |
-| `mame_selector.cmd` | Unchanged Windows launcher for `mame_selector.py`. |
+| `retro_selector.py` | Single application file, including ROMs/Samples mode switching, both panels and the SSH terminal. |
+| `retro_selector.cmd` | Unchanged Windows launcher for `retro_selector.py`. |
 | `requirements.txt` | Python dependencies. |
-| `mame_selector.properties.example` | Credential-free configuration template for both modes. |
+| `retro_selector.properties.example` | Credential-free configuration template for both modes. |
 | `assets/` | Original SVG sources of the SNES and MAME no-cover placeholders. |
 | `.gitignore` | Excludes local ROMs (`roms/`, `roms_mame/`, `roms_snes/`), samples, settings, and common key files. |
 | `README.md` | Setup and usage documentation. |
@@ -275,8 +299,10 @@ Live vi/top behavior on the author's device has not been verified.
 
 Local files generated by the application:
 
-- `mame_selector.properties`
-- `mame_selector_host_keys.json`
+- `retro_selector.properties`
+- `retro_selector_host_keys.json`
+
+Legacy `mame_selector.properties` and `mame_selector_host_keys.json` files are still read (never modified or deleted) when the new files do not exist.
 
 The repository-root `/roms/`, `/roms_mame/`, `/roms_snes/` and `/samples/` folders are excluded from Git. Custom collection paths are not automatically added to `.gitignore`, and ignore rules do not remove files already tracked by Git.
 

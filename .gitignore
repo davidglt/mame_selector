@@ -12,6 +12,11 @@ dist/
 /roms_snes/
 /samples/
 # Local configuration and server identities
+retro_selector.properties
+retro_selector.properties.tmp
+retro_selector_host_keys.json
+retro_selector_host_keys.json.tmp
+# Legacy names (pre-rename)
 mame_selector.properties
 mame_selector.properties.tmp
 mame_selector_host_keys.json

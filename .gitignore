@@ -8,6 +8,8 @@ dist/
 *.egg-info/
 # Local ROM and sample collections
 /roms/
+/roms_mame/
+/roms_snes/
 /samples/
 # Local configuration and server identities
 mame_selector.properties

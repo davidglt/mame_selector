@@ -2,11 +2,11 @@
 
 Desktop MAME ROM and sample browser and remote ZIP manager built with Python, Tkinter, Pillow, and AsyncSSH.
 
-Browse a local collection, select multiple ZIP files, transfer them over SCP, and list or delete selected remote ZIPs over SSH. Switch between ROMs and Samples in the same application: all functionality remains in `mame_selector.py`, with no second Python program.
+Browse a local collection, select multiple ZIP files, transfer them over SCP, and list or delete selected remote ZIPs over SSH. Switch between MAME (ROMs/Samples) and SNES profiles in the same application: all functionality remains in `mame_selector.py`, with no second Python program.
 
 ## Project status
 
-The ROMs/Samples update has not been runtime tested. The graphical interface and live device compatibility have not been verified. Test with expendable files before using remote deletion on your collection.
+The MAME/SNES profile update has not been runtime tested with the graphical interface or a live device. The graphical interface and live device compatibility have not been verified. Test with expendable files before using remote deletion on your collection.
 
 ## Requirements
 
@@ -30,11 +30,13 @@ D:\MAME0.139RomCollectionByGhostware\
 ├── README.md
 ├── LICENSE
 ├── mame_selector.properties.example
-├── roms\
+├── roms_mame\
 │   ├── galaxian.zip
 │   ├── galaxian.png
 │   ├── galaga.zip
 │   └── galaga.png
+├── roms_snes\
+│   └── example.sfc
 └── samples\
     └── example.zip
 ```
@@ -59,7 +61,7 @@ Alternatively, run directly:
 ## Quick start
 
 1. Run `mame_selector.cmd`.
-2. Choose `roms` or `samples` in `Content`.
+2. Choose `mame` or `snes` in `Emulator` (and `roms` or `samples` in `MAME content` for MAME).
 3. Check the matching local source and click `Load` if you have edited its path.
 4. Enter the SSH host, port, username, and credentials; check the matching remote destination.
 5. Select the remote listing mode and enable legacy RSA only if required.
@@ -71,42 +73,48 @@ Alternatively, run directly:
 
 For the first deletion test, use remote ZIP files which you can safely recreate.
 
-## ROMs and Samples modes
+## Emulator profiles (MAME / SNES)
 
-The readonly `Content` selector determines which local collection and remote destination the panels and operations use. Both modes support search, pagination, multiple selection, copying, remote listing, and remote deletion.
+The readonly `Emulator` selector chooses the active profile. SSH host, port, user, credentials, listing mode and the SSH terminal are shared by both profiles; local sources and remote destinations are separate.
 
-The four paths are independently editable:
+| UI field | Configuration key | Default | Profile |
+| --- | --- | --- | --- |
+| `MAME ROM source` | `rom.source` | `roms_mame/` | MAME |
+| `MAME samples source` | `samples.source` | `samples/` | MAME |
+| `SNES ROM source` | `snes.rom.source` | `roms_snes/` | SNES |
+| `Remote MAME ROMs` | `ssh.remote_dir` | `/var/mobile/Media/ROMs/MAME4iOS/roms/` | MAME |
+| `Remote MAME samples` | `samples.remote_dir` | `/var/mobile/Media/ROMs/MAME4iOS/samples/` | MAME |
+| `Remote SNES ROMs` | `snes.remote_dir` | `/var/mobile/Media/ROMs/Snes9xEX/roms/` | SNES |
 
-| UI field | Configuration key | Default |
-| --- | --- | --- |
-| `ROM source` | `rom.source` | `roms/` |
-| `Samples source` | `samples.source` | `samples/` |
-| `Remote ROMs` | `ssh.remote_dir` | `/var/mobile/Media/ROMs/MAME4iOS/roms/` |
-| `Remote samples` | `samples.remote_dir` | `/var/mobile/Media/ROMs/MAME4iOS/samples/` |
+The active profile is stored in `emulator.active` (`mame` or `snes`). Editing one path never changes another. Use the `Browse...` buttons to change local paths; browsing the active source loads it, browsing another only updates its setting.
 
-The default sample folders are siblings of the ROM folders. Editing one path does not change the others. Use the separate `Browse...` buttons to change local paths. Browsing the active source loads it; browsing the inactive source only updates its setting.
+### MAME: ROMs and Samples
 
-### Switching content
+In the MAME profile the readonly `MAME content` selector (`content.mode`, `roms` or `samples`) chooses between the ROM and sample collections. Samples (local and remote) belong exclusively to MAME. When SNES is active, the `MAME content`, `MAME samples source` and `Remote MAME samples` controls are disabled (not deleted) and their saved values are preserved.
 
-Changing `Content` clears both local and remote marks, resets the search filters and local pagination, invalidates the previous remote list, and loads the newly selected local source. Panel titles identify the active content.
+### SNES
 
-Click `Refresh` to load the new mode's remote list. A ROMs list cannot authorize deletion in Samples mode, or vice versa. The SSH endpoint and authentication settings are shared by both modes.
+The SNES profile browses and transfers files with these extensions (case-insensitive): `.sfc`, `.smc`, `.swc`, `.fig` and `.zip`. This is the list the application filters on; it does not check that the emulator or any device accepts a particular file. Files are copied and deleted as they are, with no conversion, header removal, renaming or unzipping. No MAME sample matching or MAME-specific messages (BIOS/parent warnings) are applied. Local files are shown by full filename; an optional PNG with the same stem (`game.png` for `game.sfc`) is used as a thumbnail, otherwise `No image` is shown.
 
-If the selected source does not exist, the application reports an error and leaves the local panel empty instead of showing files from the previous mode. Local and remote directories are not created automatically.
+### Switching profiles
 
-Mode and configuration controls are disabled during batch confirmation and remote operations. Each batch uses a captured selection and configuration, including the active source and destination. Copy and deletion confirmations show the content mode and destination.
+Changing `Emulator` (or `MAME content`) clears local and remote marks, resets the search filters and pagination, invalidates the previous remote list, and loads the selected profile's local source. Click `Refresh` to list the new profile's remote directory. A listing from one profile cannot authorize deletion in another, and destinations are never mixed.
+
+Switching is blocked while an operation, batch confirmation or the SSH terminal is active. Copy, list and delete operations capture the profile, local source, remote destination and selection before asynchronous work starts; later changes in the interface do not affect a running operation. Copy and deletion confirmations show the profile and destination.
+
+If the selected source does not exist, the application reports an error and leaves the local panel empty. Local and remote directories are not created automatically.
 
 ### Existing configuration files
 
-Old `mame_selector.properties` files remain supported. Missing keys use defaults: `content.mode=roms`, `samples.source=samples/`, and `samples.remote_dir=/var/mobile/Media/ROMs/MAME4iOS/samples/`. Existing `rom.source` and `ssh.remote_dir` settings remain unchanged. A file without `terminal.scrollback_lines` (older versions) uses the default `10000`; saving writes the key.
+Old `mame_selector.properties` files remain supported. Existing `rom.source`, `ssh.remote_dir`, `samples.source`, `samples.remote_dir` and `content.mode` settings stay MAME settings and are not replaced by SNES values. Missing keys use defaults: `emulator.active=mame`, `snes.rom.source=roms_snes/` and `snes.remote_dir=/var/mobile/Media/ROMs/Snes9xEX/roms/`. A file that lacks `rom.source` keeps the previous `roms/` value for MAME; the new `roms_mame/` default applies only when there is no configuration file. A file without `terminal.scrollback_lines` uses the default `10000`.
 
-Clicking `Save` writes the new settings along with the existing ones. Internal operation snapshots are not written to the configuration file. You do not need to replace your local configuration with the example file.
+Clicking `Save` writes all settings (both profiles and the active emulator). Internal operation snapshots are not written. The example file has empty credentials; you do not need to replace your local configuration with it.
 
 ## Local collections
 
 Relative local sources are resolved against the directory containing `mame_selector.py`, not the current CMD working directory. Absolute source paths are also supported. Relative private-key paths use the same base directory.
 
-Place optional PNG thumbnails beside their corresponding ZIP files, with the same filename stem:
+Place optional PNG thumbnails beside their corresponding ROM files, with the same filename stem:
 
 ```text
 roms/
@@ -116,7 +124,7 @@ roms/
 └── galaga.png
 ```
 
-Only ZIP files directly inside the active source are scanned; subdirectories are not scanned. Missing or unreadable PNGs display `No image` in ROMs mode and a generic `Samples` placeholder in Samples mode. Sample ZIPs do not require PNGs. Images remain local and are not copied.
+Only files with the profile's extensions (`.zip` for MAME; see SNES above) directly inside the active source are scanned; subdirectories are not scanned. Missing or unreadable PNGs display `No image` in ROMs mode and a generic `Samples` placeholder in Samples mode. Sample ZIPs do not require PNGs. Images remain local and are not copied.
 
 ### Search and multiple selection
 
@@ -256,7 +264,7 @@ Live vi/top behavior on the author's device has not been verified.
 | `mame_selector.cmd` | Unchanged Windows launcher for `mame_selector.py`. |
 | `requirements.txt` | Python dependencies. |
 | `mame_selector.properties.example` | Credential-free configuration template for both modes. |
-| `.gitignore` | Excludes local ROMs, samples, settings, and common key files. |
+| `.gitignore` | Excludes local ROMs (`roms/`, `roms_mame/`, `roms_snes/`), samples, settings, and common key files. |
 | `README.md` | Setup and usage documentation. |
 | `LICENSE` | Complete GNU GPLv3 license text. |
 
@@ -265,7 +273,7 @@ Local files generated by the application:
 - `mame_selector.properties`
 - `mame_selector_host_keys.json`
 
-The repository-root `/roms/` and `/samples/` folders are excluded from Git. Custom collection paths are not automatically added to `.gitignore`, and ignore rules do not remove files already tracked by Git.
+The repository-root `/roms/`, `/roms_mame/`, `/roms_snes/` and `/samples/` folders are excluded from Git. Custom collection paths are not automatically added to `.gitignore`, and ignore rules do not remove files already tracked by Git.
 
 ## Troubleshooting
 

@@ -25,10 +25,12 @@ BASE = Path(__file__).resolve().parent
 CONFIG = BASE / 'mame_selector.properties'
 HOSTS = BASE / 'mame_selector_host_keys.json'
 DEFAULTS = {
-    'content.mode': 'roms', 'rom.source': 'roms/', 'samples.source': 'samples/',
+    'emulator.active': 'mame', 'content.mode': 'roms', 'rom.source': 'roms_mame/',
+    'samples.source': 'samples/', 'snes.rom.source': 'roms_snes/',
     'ssh.host': '192.168.69.53', 'ssh.port': '22', 'ssh.username': 'root',
     'ssh.remote_dir': '/var/mobile/Media/ROMs/MAME4iOS/roms/',
     'samples.remote_dir': '/var/mobile/Media/ROMs/MAME4iOS/samples/',
+    'snes.remote_dir': '/var/mobile/Media/ROMs/Snes9xEX/roms/',
     'ssh.auth_mode': 'password', 'ssh.private_key': '', 'ssh.password': '',
     'ssh.key_passphrase': '', 'ssh.legacy_rsa': 'true',
     'ssh.save_credentials': 'false', 'ssh.remote_listing_mode': 'ssh',
@@ -37,6 +39,12 @@ DEFAULTS = {
 CONNECTION_KEYS = ('ssh.host', 'ssh.port', 'ssh.username', 'ssh.auth_mode', 'ssh.password',
                    'ssh.private_key', 'ssh.key_passphrase', 'ssh.legacy_rsa')
 SCROLLBACK_KEY = 'terminal.scrollback_lines'
+EMULATORS = ('mame', 'snes')
+EMULATOR_NAMES = {'mame': 'MAME', 'snes': 'SNES'}
+LEGACY_ROM_SOURCE = 'roms/'  # rom.source default used before profiles existed
+SNES_EXTENSIONS = ('.sfc', '.smc', '.swc', '.fig', '.zip')
+ENUM_KEYS = {'emulator.active': EMULATORS, 'content.mode': ('roms', 'samples'),
+             'ssh.auth_mode': ('password', 'key'), 'ssh.remote_listing_mode': ('ssh', 'sftp')}
 MAX_SCROLLBACK = sys.maxsize  # collections.deque(maxlen=...) cannot represent more; no lower policy cap
 PAGE_SIZE = 40
 
@@ -61,12 +69,53 @@ def parse_scrollback(text):
     return number
 
 
-def active_keys(mode):
+def parse_properties(text):
+    """Return the known settings found in properties text; unknown keys and comments are ignored."""
+    found = {}
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith(('#', '!')):
+            continue
+        key, separator, value = line.partition('=')
+        if separator and key.strip() in DEFAULTS:
+            found[key.strip()] = value
+    return found
+
+
+def resolve_config(found):
+    """Merge found settings over defaults. Legacy keys (rom.source, ssh.remote_dir, samples.*)
+    stay MAME settings; missing SNES/emulator keys take their defaults."""
+    values = DEFAULTS.copy()
+    values.update(found)
+    if found and 'rom.source' not in found:
+        values['rom.source'] = LEGACY_ROM_SOURCE
+    for key, allowed in ENUM_KEYS.items():
+        if values[key] not in allowed:
+            values[key] = DEFAULTS[key]
+    return values
+
+
+def active_keys(mode, emulator='mame'):
+    """Return the (local source key, remote directory key) of a profile."""
+    if emulator == 'snes':
+        return 'snes.rom.source', 'snes.remote_dir'
+    if emulator != 'mame':
+        raise ValueError('Select MAME or SNES.')
     if mode == 'roms':
         return 'rom.source', 'ssh.remote_dir'
     if mode == 'samples':
         return 'samples.source', 'samples.remote_dir'
     raise ValueError('Select roms or samples.')
+
+
+def profile_extensions(emulator):
+    """Lowercase file extensions handled by a profile."""
+    return SNES_EXTENSIONS if emulator == 'snes' else ('.zip',)
+
+
+def shell_patterns(extensions):
+    """Case-insensitive shell glob alternatives for fixed, trusted extensions."""
+    return '|'.join('*' + ''.join(f'[{c.lower()}{c.upper()}]' if c.isalpha() else c for c in ext)
+                    for ext in extensions)
 
 
 def sample_placeholder():
@@ -699,30 +748,22 @@ class App:
         root.title('MAME Selector - ROMs / Samples - SSH / SCP')
         root.geometry('1450x950')
         root.minsize(1100, 760)
-        values = DEFAULTS.copy()
+        found = {}
         try:
             if CONFIG.exists():
-                for line in CONFIG.read_text(encoding='utf-8-sig').splitlines():
-                    if not line.strip() or line.lstrip().startswith(('#', '!')):
-                        continue
-                    key, separator, value = line.partition('=')
-                    if separator and key.strip() in values:
-                        values[key.strip()] = value
+                found = parse_properties(CONFIG.read_text(encoding='utf-8-sig'))
         except (OSError, UnicodeError) as error:
             messagebox.showwarning('Configuration', str(error))
+        values = resolve_config(found)
         self.v = {key: tk.StringVar(value=value) for key, value in values.items()}
         if values['ssh.save_credentials'] != 'true':
             self.v['ssh.password'].set('')
             self.v['ssh.key_passphrase'].set('')
-        for key, allowed in [('content.mode', ('roms', 'samples')),
-                             ('ssh.auth_mode', ('password', 'key')),
-                             ('ssh.remote_listing_mode', ('ssh', 'sftp'))]:
-            if self.v[key].get() not in allowed:
-                self.v[key].set(DEFAULTS[key])
         self.busy = False
         self.terminal = None
         self.events = queue.Queue()
-        self.settings, self.combos = [], []
+        self.settings, self.combos, self.sample_widgets = [], [], []
+        self.active_profile = self.v['emulator.active'].get()
         self.roms, self.filtered, self.remote = [], [], []
         self.marks, self.remote_marks = set(), set()
         self.loaded = self.remote_target = None
@@ -733,25 +774,56 @@ class App:
         self.status, self.pages = tk.StringVar(value='Ready'), tk.StringVar()
         self.build()
         for key in ('ssh.host', 'ssh.port', 'ssh.username', 'ssh.remote_dir',
-                    'samples.remote_dir', 'ssh.remote_listing_mode'):
+                    'samples.remote_dir', 'snes.remote_dir', 'ssh.remote_listing_mode'):
             self.v[key].trace_add('write', self.invalidate_remote)
         self.v['content.mode'].trace_add('write', self.mode_changed)
+        self.v['emulator.active'].trace_add('write', self.profile_changed)
         self.search.trace_add('write', self.schedule_filter)
         self.remote_search.trace_add('write', lambda *args: self.render_remote())
         self.auth_state()
+        self.profile_state()
         self.update_titles()
         self.load()
         self.render_remote()
         root.protocol('WM_DELETE_WINDOW', self.close)
         root.after(100, self.poll)
 
+    def emulator(self):
+        return self.v['emulator.active'].get()
+
     def source_key(self):
-        return active_keys(self.v['content.mode'].get())[0]
+        return active_keys(self.v['content.mode'].get(), self.emulator())[0]
+
+    def noun(self):
+        return 'ZIPs' if self.emulator() == 'mame' else 'files'
+
+    def label(self, path):
+        return path.stem if self.emulator() == 'mame' else path.name
 
     def update_titles(self):
-        label = 'Samples' if self.v['content.mode'].get() == 'samples' else 'ROMs'
+        if self.emulator() == 'snes':
+            label = 'SNES ROMs'
+        else:
+            label = 'MAME Samples' if self.v['content.mode'].get() == 'samples' else 'MAME ROMs'
         self.local_panel.configure(text=f'Local {label}')
         self.remote_panel.configure(text=f'Remote {label}')
+        self.tree.heading('name', text='Remote ZIP filename' if self.emulator() == 'mame' else 'Remote filename')
+
+    def profile_state(self):
+        """Samples belong to MAME only: disable their controls for SNES (settings are kept)."""
+        enabled = not self.busy and self.emulator() == 'mame'
+        for widget in self.sample_widgets:
+            widget.configure(state=('readonly' if isinstance(widget, ttk.Combobox) else 'normal')
+                             if enabled else 'disabled')
+
+    def profile_changed(self, *args):
+        if self.busy:
+            if self.emulator() != self.active_profile:
+                self.v['emulator.active'].set(self.active_profile)
+            return
+        self.active_profile = self.emulator()
+        self.profile_state()
+        self.mode_changed()
 
     def cancel_filter(self):
         if self.job is not None:
@@ -779,16 +851,17 @@ class App:
         config.pack(fill='x', padx=10, pady=10)
         config.columnconfigure(1, weight=1)
         self.entries = {}
-        labels = [('Content:', 'content.mode'), ('ROM source:', 'rom.source'),
-                  ('Samples source:', 'samples.source'), ('SSH host / IP:', 'ssh.host'),
+        labels = [('Emulator:', 'emulator.active'), ('MAME content:', 'content.mode'),
+                  ('MAME ROM source:', 'rom.source'), ('MAME samples source:', 'samples.source'),
+                  ('SNES ROM source:', 'snes.rom.source'), ('SSH host / IP:', 'ssh.host'),
                   ('SSH port:', 'ssh.port'), ('User:', 'ssh.username'),
-                  ('Remote ROMs:', 'ssh.remote_dir'), ('Remote samples:', 'samples.remote_dir'),
-                  ('Authentication:', 'ssh.auth_mode'), ('Password:', 'ssh.password'),
+                  ('Remote MAME ROMs:', 'ssh.remote_dir'), ('Remote MAME samples:', 'samples.remote_dir'),
+                  ('Remote SNES ROMs:', 'snes.remote_dir'), ('Authentication:', 'ssh.auth_mode'), ('Password:', 'ssh.password'),
                   ('Private key:', 'ssh.private_key'), ('Key passphrase:', 'ssh.key_passphrase'),
                   ('Remote listing:', 'ssh.remote_listing_mode'),
                   ('Terminal scrollback lines:', SCROLLBACK_KEY)]
-        choices = {'content.mode': ('roms', 'samples'), 'ssh.auth_mode': ('password', 'key'),
-                   'ssh.remote_listing_mode': ('ssh', 'sftp')}
+        choices = {key: allowed for key, allowed in ENUM_KEYS.items()}
+        rows = {key: row for row, (label, key) in enumerate(labels)}
         for row, (label, key) in enumerate(labels):
             ttk.Label(config, text=label).grid(row=row, column=0, sticky='w', padx=8, pady=2)
             if key in choices:
@@ -802,26 +875,32 @@ class App:
                 self.settings.append(widget)
             widget.grid(row=row, column=1, sticky='ew', pady=2)
             self.entries[key] = widget
-            if key in ('rom.source', 'samples.source'):
+            if key in ('content.mode', 'samples.source', 'samples.remote_dir'):
+                self.sample_widgets.append(widget)
+            if key in ('rom.source', 'samples.source', 'snes.rom.source'):
                 widget.bind('<Return>', lambda event: self.load())
                 button = ttk.Button(config, text='Browse...', command=lambda k=key: self.browse_source(k))
                 button.grid(row=row, column=2, padx=8)
                 self.settings.append(button)
+                if key == 'samples.source':
+                    self.sample_widgets.append(button)
+        last = len(labels)
         for row, column, label, command in [(0, 3, 'Load', self.load),
-                (10, 2, 'Browse...', self.browse_key), (15, 3, 'Save', self.save)]:
+                (rows['ssh.private_key'], 2, 'Browse...', self.browse_key), (last + 1, 3, 'Save', self.save)]:
             button = ttk.Button(config, text=label, command=command)
             button.grid(row=row, column=column, padx=8)
             self.settings.append(button)
-            if row == 10:
+            if label == 'Browse...':
                 self.key_browse = button
-        for row, key, label in [(14, 'ssh.legacy_rsa', 'Allow legacy SSH RSA (SHA-1)'),
-                (15, 'ssh.save_credentials', 'Save credentials in .properties (plain text)')]:
+        for row, key, label in [(last, 'ssh.legacy_rsa', 'Allow legacy SSH RSA (SHA-1)'),
+                (last + 1, 'ssh.save_credentials', 'Save credentials in .properties (plain text)')]:
             check = ttk.Checkbutton(config, text=label, variable=self.v[key], onvalue='true', offvalue='false')
             check.grid(row=row, column=1, sticky='w')
             self.settings.append(check)
         self.terminal_button = ttk.Button(config, text='>_ SSH terminal', command=self.open_terminal)
-        self.terminal_button.grid(row=11, column=2, columnspan=2, padx=8)
-        ttk.Label(config, text='ssh: POSIX shell / sftp: SFTP subsystem').grid(row=12, column=2, columnspan=2)
+        self.terminal_button.grid(row=rows['ssh.private_key'] + 1, column=2, columnspan=2, padx=8)
+        ttk.Label(config, text='ssh: POSIX shell / sftp: SFTP subsystem').grid(
+            row=rows['ssh.private_key'] + 2, column=2, columnspan=2)
         split = ttk.Panedwindow(self.root, orient='horizontal')
         split.pack(fill='both', expand=True, padx=10)
         left, right = ttk.LabelFrame(split), ttk.LabelFrame(split)
@@ -903,6 +982,7 @@ class App:
             widget.configure(state='disabled' if busy else 'readonly')
         self.terminal_button.configure(state='disabled' if busy else 'normal')
         self.auth_state()
+        self.profile_state()
         self.update_marks()
 
     def browse_source(self, key=None):
@@ -928,17 +1008,19 @@ class App:
         values = {key: var.get() for key, var in self.v.items()}
         if terminal or scrollback:
             values[SCROLLBACK_KEY] = str(parse_scrollback(values[SCROLLBACK_KEY]))
-        for key in ('rom.source', 'samples.source', 'ssh.host', 'ssh.port', 'ssh.username',
-                    'ssh.remote_dir', 'samples.remote_dir', 'ssh.private_key'):
+        for key in ('rom.source', 'samples.source', 'snes.rom.source', 'ssh.host', 'ssh.port', 'ssh.username',
+                    'ssh.remote_dir', 'samples.remote_dir', 'snes.remote_dir', 'ssh.private_key'):
             values[key] = values[key].strip()
         if terminal:
             values = {key: values[key] for key in CONNECTION_KEYS + (SCROLLBACK_KEY,)}
         if any('\n' in value or '\r' in value or '\0' in value for value in values.values()):
             raise ValueError('Values cannot contain line breaks or NUL characters.')
         if not terminal:
-            source_key, remote_key = active_keys(values['content.mode'])
+            if values['emulator.active'] not in EMULATORS:
+                raise ValueError('Invalid emulator.')
+            source_key, remote_key = active_keys(values['content.mode'], values['emulator.active'])
             if not values[source_key] or not local(values[source_key]).is_dir():
-                raise ValueError(f"Select an existing {values['content.mode']} source directory.")
+                raise ValueError(f"Select an existing {self.profile_name(values)} source directory.")
         if not values['ssh.host'] or not values['ssh.username']:
             raise ValueError('Enter host and username.')
         port = int(values['ssh.port'])
@@ -955,9 +1037,16 @@ class App:
             if not values['ssh.private_key'] or not path.is_file() or path.suffix.lower() == '.pub':
                 raise ValueError('Select an existing private key, not a .pub file.')
         if not terminal:
+            values['operation.emulator'] = values['emulator.active']
             values['operation.source'] = values[source_key]
             values['operation.remote_dir'] = values[remote_key]
         return values
+
+    @staticmethod
+    def profile_name(values):
+        if values['emulator.active'] == 'snes':
+            return 'SNES ROMs'
+        return 'MAME samples' if values['content.mode'] == 'samples' else 'MAME ROMs'
 
     def save(self):
         try:
@@ -982,7 +1071,8 @@ class App:
             directory = local(text)
             if not text or not directory.is_dir():
                 raise ValueError(f'Source directory not found:\n{directory}')
-            roms = sorted((path for path in directory.iterdir() if path.is_file() and path.suffix.lower() == '.zip'),
+            extensions = profile_extensions(self.emulator())
+            roms = sorted((path for path in directory.iterdir() if path.is_file() and path.suffix.lower() in extensions),
                           key=lambda path: path.name.casefold())
         except (OSError, ValueError) as error:
             self.roms, self.filtered = [], []
@@ -997,7 +1087,10 @@ class App:
         self.loaded, self.roms = directory, roms
         self.marks.intersection_update(roms)
         self.filter()
-        self.status.set(f"Loaded {len(roms)} local {self.v['content.mode'].get()} ZIPs.")
+        self.status.set(f"Loaded {len(roms)} local {self.profile_name(self.values_snapshot())} {self.noun()}.")
+
+    def values_snapshot(self):
+        return {'emulator.active': self.emulator(), 'content.mode': self.v['content.mode'].get()}
 
     def schedule_filter(self, *args):
         self.cancel_filter()
@@ -1027,14 +1120,14 @@ class App:
             self.grid.columnconfigure(column, weight=1)
         visible = self.filtered[self.page * PAGE_SIZE:(self.page + 1) * PAGE_SIZE]
         if not visible:
-            ttk.Label(self.grid, text='No matching ZIPs.', padding=20).grid(row=0, column=0, columnspan=4)
+            ttk.Label(self.grid, text=f'No matching {self.noun()}.', padding=20).grid(row=0, column=0, columnspan=4)
         for index, path in enumerate(visible):
             try:
                 with Image.open(path.with_suffix('.png')) as source:
                     image = ImageOps.exif_transpose(source).convert('RGBA')
                     image.thumbnail((150, 110), Image.Resampling.LANCZOS)
             except (OSError, ValueError):
-                if self.v['content.mode'].get() == 'samples':
+                if self.emulator() == 'mame' and self.v['content.mode'].get() == 'samples':
                     image = sample_placeholder()
                 else:
                     image = Image.new('RGBA', (150, 110), '#ddd')
@@ -1046,7 +1139,7 @@ class App:
             card = tk.Frame(self.grid, bd=2, relief='solid')
             card.grid(row=index // 4, column=index % 4, padx=4, pady=4, sticky='nsew')
             variable = tk.BooleanVar(value=path in self.marks)
-            check = tk.Checkbutton(card, text=path.stem, variable=variable, wraplength=145,
+            check = tk.Checkbutton(card, text=self.label(path), variable=variable, wraplength=145,
                                    command=lambda item=path: self.toggle(item))
             check.pack(fill='x')
             button = tk.Button(card, image=photo, relief='flat', command=lambda item=path: self.toggle(item))
@@ -1088,7 +1181,7 @@ class App:
 
     def update_marks(self):
         hidden = len(self.marks.difference(self.filtered))
-        self.count.set(f'{len(self.filtered)} / {len(self.roms)} ZIPs | {len(self.marks)} selected ({hidden} outside filter)')
+        self.count.set(f'{len(self.filtered)} / {len(self.roms)} {self.noun()} | {len(self.marks)} selected ({hidden} outside filter)')
         self.copy_button.configure(text=f'Copy selected ({len(self.marks)})',
                                    state='normal' if self.marks and not self.busy else 'disabled')
         valid = self.remote_target is not None and self.remote_target == self.signature()
@@ -1106,9 +1199,10 @@ class App:
         self.render()
 
     def signature(self):
-        mode = self.v['content.mode'].get()
-        remote_key = active_keys(mode)[1]
-        return (mode,) + tuple(self.v[key].get().strip() for key in
+        emulator = self.emulator()
+        mode = self.v['content.mode'].get() if emulator == 'mame' else ''
+        remote_key = active_keys(mode, emulator)[1]
+        return (emulator, mode) + tuple(self.v[key].get().strip() for key in
                      ('ssh.host', 'ssh.port', 'ssh.username', remote_key, 'ssh.remote_listing_mode'))
 
     def invalidate_remote(self, *args):
@@ -1126,7 +1220,7 @@ class App:
             row = self.tree.insert('', 'end', values=('[x]' if name in self.remote_marks else '[ ]', name))
             self.remote_rows[row] = name
         hidden = len(self.remote_marks.difference(names))
-        self.remote_count.set(f'{len(names)} / {len(self.remote)} ZIPs | {len(self.remote_marks)} marked ({hidden} outside filter)'
+        self.remote_count.set(f'{len(names)} / {len(self.remote)} {self.noun()} | {len(self.remote_marks)} marked ({hidden} outside filter)'
                               if self.remote_target else 'Not loaded — click Refresh')
         self.update_marks()
 
@@ -1193,12 +1287,13 @@ class App:
 
     async def list_async(self, values):
         directory = values['operation.remote_dir']
+        extensions = profile_extensions(values['operation.emulator'])
         async with await self.connect(values) as connection:
             if values['ssh.remote_listing_mode'] == 'sftp':
                 result = []
                 async with connection.start_sftp_client() as sftp:
                     for name in await sftp.listdir(directory):
-                        if not name.lower().endswith('.zip'):
+                        if not name.lower().endswith(extensions):
                             continue
                         attrs = await sftp.stat(posixpath.join(directory, name))
                         if self.regular(attrs):
@@ -1208,7 +1303,7 @@ class App:
                     '[ -d "$directory" ] || { printf "%s\\n" "Directory not found" >&2; exit 1; }; '
                     '[ -r "$directory" ] && [ -x "$directory" ] || { printf "%s\\n" "Directory not accessible" >&2; exit 1; }; '
                     'for path in "$directory"/*; do [ -f "$path" ] || continue; '
-                    'case "$path" in *.[zZ][iI][pP]) printf "%s\\000" "${path##*/}" ;; esac; done; exit 0')
+                    'case "$path" in ' + shell_patterns(extensions) + ') printf "%s\\000" "${path##*/}" ;; esac; done; exit 0')
                 response = await connection.run(command, check=True, timeout=60)
                 result = [name for name in response.stdout.split('\0') if name]
             return sorted(result, key=str.casefold)
@@ -1277,8 +1372,9 @@ class App:
             files = sorted(self.remote_marks, key=str.casefold)
             if not set(files).issubset(self.remote):
                 raise ValueError('Stale remote selection. Refresh first.')
+            extensions = profile_extensions(values['operation.emulator'])
             for name in files:
-                if (not name.lower().endswith('.zip') or '/' in name or '\\' in name
+                if (not name.lower().endswith(extensions) or '/' in name or '\\' in name
                         or any(ord(character) < 32 for character in name)):
                     raise ValueError(f'Unsafe filename: {name!r}')
         except (OSError, ValueError) as error:
@@ -1288,10 +1384,11 @@ class App:
 
     def start_batch(self, files, values, deleting):
         action = 'Delete permanently' if deleting else 'Copy'
-        warning = ('Permanent remote deletion. Local files are not modified.\n'
-                   'BIOS and parent ZIPs may be required by other games.' if deleting
+        warning = ('Permanent remote deletion. Local files are not modified.' +
+                   ('\nBIOS and parent ZIPs may be required by other games.'
+                    if values['operation.emulator'] == 'mame' else '') if deleting
                    else 'Existing remote files may be overwritten.')
-        text = (f"Content: {values['content.mode']}\n{action} {len(files)} files\n"
+        text = (f"Profile: {self.profile_name(values)}\n{action} {len(files)} files\n"
                 f"Server: {values['ssh.username']}@{values['ssh.host']}\n"
                 f"Port: {values['ssh.port']}\nDirectory: {values['operation.remote_dir']}\n\n{warning}\n"
                 'Includes marks outside the current filter.\n\n' +

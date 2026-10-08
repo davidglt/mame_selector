@@ -16,7 +16,7 @@ retro_selector.properties
 retro_selector.properties.tmp
 retro_selector_host_keys.json
 retro_selector_host_keys.json.tmp
-# Legacy names (pre-rename)
+# Legacy names (pre-rename); never loaded, ignored to avoid committing private data
 mame_selector.properties
 mame_selector.properties.tmp
 mame_selector_host_keys.json

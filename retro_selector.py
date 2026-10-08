@@ -25,9 +25,7 @@ import pyte
 
 BASE = Path(__file__).resolve().parent
 CONFIG = BASE / 'retro_selector.properties'
-LEGACY_CONFIG = BASE / 'mame_selector.properties'
 HOSTS = BASE / 'retro_selector_host_keys.json'
-LEGACY_HOSTS = BASE / 'mame_selector_host_keys.json'
 DEFAULTS = {
     'emulator.active': 'mame', 'content.mode': 'roms', 'rom.source': 'roms_mame/',
     'samples.source': 'samples/', 'snes.rom.source': 'roms_snes/',
@@ -71,15 +69,6 @@ def parse_scrollback(text):
     if not 1 <= number <= MAX_SCROLLBACK:
         raise ValueError(message)
     return number
-
-
-def config_source():
-    """Path to load settings from: the new file, else the legacy file, else None.
-    The legacy file is only read; Save always writes CONFIG and never deletes it."""
-    for path in (CONFIG, LEGACY_CONFIG):
-        if path.exists():
-            return path
-    return None
 
 
 def parse_properties(text):
@@ -877,9 +866,8 @@ class App:
         root.minsize(1100, 760)
         found = {}
         try:
-            source = config_source()
-            if source is not None:
-                found = parse_properties(source.read_text(encoding='utf-8-sig'))
+            if CONFIG.exists():
+                found = parse_properties(CONFIG.read_text(encoding='utf-8-sig'))
         except (OSError, UnicodeError) as error:
             messagebox.showwarning('Configuration', str(error))
         values = resolve_config(found)
@@ -1422,8 +1410,7 @@ class App:
             host, port=port, server_host_key_algs=algorithms, config=None), 30)
         if key is None:
             raise RuntimeError('No server host key.')
-        known = HOSTS if HOSTS.exists() else LEGACY_HOSTS
-        registry = json.loads(known.read_text(encoding='utf-8')) if known.exists() else {}
+        registry = json.loads(HOSTS.read_text(encoding='utf-8')) if HOSTS.exists() else {}
         if not isinstance(registry, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in registry.items()):
             raise ValueError('Invalid host key registry.')
         public = key.export_public_key('openssh').decode('ascii').strip()

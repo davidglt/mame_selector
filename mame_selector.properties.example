@@ -14,3 +14,4 @@ ssh.key_passphrase=
 ssh.legacy_rsa=true
 ssh.save_credentials=false
 ssh.remote_listing_mode=ssh
+terminal.scrollback_lines=10000

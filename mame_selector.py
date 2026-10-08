@@ -86,7 +86,8 @@ def resolve_config(found):
     stay MAME settings; missing SNES/emulator keys take their defaults."""
     values = DEFAULTS.copy()
     values.update(found)
-    if found and 'rom.source' not in found:
+    if found and 'rom.source' not in found and not any(
+            key == 'emulator.active' or key.startswith('snes.') for key in found):
         values['rom.source'] = LEGACY_ROM_SOURCE
     for key, allowed in ENUM_KEYS.items():
         if values[key] not in allowed:
@@ -860,7 +861,7 @@ class App:
                   ('Private key:', 'ssh.private_key'), ('Key passphrase:', 'ssh.key_passphrase'),
                   ('Remote listing:', 'ssh.remote_listing_mode'),
                   ('Terminal scrollback lines:', SCROLLBACK_KEY)]
-        choices = {key: allowed for key, allowed in ENUM_KEYS.items()}
+        choices = ENUM_KEYS
         rows = {key: row for row, (label, key) in enumerate(labels)}
         for row, (label, key) in enumerate(labels):
             ttk.Label(config, text=label).grid(row=row, column=0, sticky='w', padx=8, pady=2)
@@ -1087,7 +1088,7 @@ class App:
         self.loaded, self.roms = directory, roms
         self.marks.intersection_update(roms)
         self.filter()
-        self.status.set(f"Loaded {len(roms)} local {self.profile_name(self.values_snapshot())} {self.noun()}.")
+        self.status.set(f"Loaded {len(roms)} local {self.profile_name(self.values_snapshot())} files.")
 
     def values_snapshot(self):
         return {'emulator.active': self.emulator(), 'content.mode': self.v['content.mode'].get()}

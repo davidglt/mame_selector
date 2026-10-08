@@ -106,7 +106,7 @@ If the selected source does not exist, the application reports an error and leav
 
 ### Existing configuration files
 
-Old `mame_selector.properties` files remain supported. Existing `rom.source`, `ssh.remote_dir`, `samples.source`, `samples.remote_dir` and `content.mode` settings stay MAME settings and are not replaced by SNES values. Missing keys use defaults: `emulator.active=mame`, `snes.rom.source=roms_snes/` and `snes.remote_dir=/var/mobile/Media/ROMs/Snes9xEX/roms/`. A file that lacks `rom.source` keeps the previous `roms/` value for MAME; the new `roms_mame/` default applies only when there is no configuration file. A file without `terminal.scrollback_lines` uses the default `10000`.
+Old `mame_selector.properties` files remain supported. Existing `rom.source`, `ssh.remote_dir`, `samples.source`, `samples.remote_dir` and `content.mode` settings stay MAME settings and are not replaced by SNES values. Missing keys use defaults: `emulator.active=mame`, `snes.rom.source=roms_snes/` and `snes.remote_dir=/var/mobile/Media/ROMs/Snes9xEX/roms/`. A legacy file (without `emulator.active` or `snes.*` keys) that lacks `rom.source` keeps the previous `roms/` value for MAME; the new `roms_mame/` default applies only when there is no configuration file. A file without `terminal.scrollback_lines` uses the default `10000`.
 
 Clicking `Save` writes all settings (both profiles and the active emulator). Internal operation snapshots are not written. The example file has empty credentials; you do not need to replace your local configuration with it.
 

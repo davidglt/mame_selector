@@ -988,9 +988,9 @@ class App:
                        ('Terminal scrollback lines:', SCROLLBACK_KEY)]
         # (label, key, profile it belongs to; None = always visible; same row = one grid row)
         right_fields = [('Emulator:', 'emulator.active', None, 0),
-                        ('Local MAME ROMs:', 'rom.source', 'mame', 1), ('Local SNES ROMs:', 'snes.rom.source', 'snes', 1),
-                        ('Remote MAME ROMs:', 'ssh.remote_dir', 'mame', 2), ('Remote SNES ROMs:', 'snes.remote_dir', 'snes', 2),
-                        ('MAME content:', 'content.mode', 'mame', 3),
+                        ('MAME content:', 'content.mode', 'mame', 1),
+                        ('Local MAME ROMs:', 'rom.source', 'mame', 2), ('Local SNES ROMs:', 'snes.rom.source', 'snes', 2),
+                        ('Remote MAME ROMs:', 'ssh.remote_dir', 'mame', 3), ('Remote SNES ROMs:', 'snes.remote_dir', 'snes', 3),
                         ('Local MAME samples:', 'samples.source', 'mame', 4),
                         ('Remote MAME samples:', 'samples.remote_dir', 'mame', 5)]
         browse_keys = ('rom.source', 'samples.source', 'snes.rom.source')

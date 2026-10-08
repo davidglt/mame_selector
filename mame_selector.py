@@ -812,6 +812,12 @@ class App:
 
     def profile_state(self):
         """Samples belong to MAME only: disable their controls for SNES (settings are kept)."""
+        for profile, widgets in self.profile_rows.items():
+            for widget in widgets:
+                if profile == self.emulator():
+                    widget.grid()
+                else:
+                    widget.grid_remove()
         enabled = not self.busy and self.emulator() == 'mame'
         for widget in self.sample_widgets:
             widget.configure(state=('readonly' if isinstance(widget, ttk.Combobox) else 'normal')
@@ -850,58 +856,83 @@ class App:
         self.root.configure(menu=menu)
         config = ttk.LabelFrame(self.root, text='Configuration', padding=10)
         config.pack(fill='x', padx=10, pady=10)
-        config.columnconfigure(1, weight=1)
+        config.columnconfigure(0, weight=1, uniform='columns')
+        config.columnconfigure(1, weight=1, uniform='columns')
+        left, right = ttk.LabelFrame(config, text='SSH connection (shared)', padding=6), \
+            ttk.LabelFrame(config, text='Emulator profile', padding=6)
+        left.grid(row=0, column=0, sticky='nsew', padx=(0, 5))
+        right.grid(row=0, column=1, sticky='nsew', padx=(5, 0))
+        for column in (left, right):
+            column.columnconfigure(1, weight=1)
         self.entries = {}
-        labels = [('Emulator:', 'emulator.active'), ('MAME content:', 'content.mode'),
-                  ('MAME ROM source:', 'rom.source'), ('MAME samples source:', 'samples.source'),
-                  ('SNES ROM source:', 'snes.rom.source'), ('SSH host / IP:', 'ssh.host'),
-                  ('SSH port:', 'ssh.port'), ('User:', 'ssh.username'),
-                  ('Remote MAME ROMs:', 'ssh.remote_dir'), ('Remote MAME samples:', 'samples.remote_dir'),
-                  ('Remote SNES ROMs:', 'snes.remote_dir'), ('Authentication:', 'ssh.auth_mode'), ('Password:', 'ssh.password'),
-                  ('Private key:', 'ssh.private_key'), ('Key passphrase:', 'ssh.key_passphrase'),
-                  ('Remote listing:', 'ssh.remote_listing_mode'),
-                  ('Terminal scrollback lines:', SCROLLBACK_KEY)]
-        choices = ENUM_KEYS
-        rows = {key: row for row, (label, key) in enumerate(labels)}
-        for row, (label, key) in enumerate(labels):
-            ttk.Label(config, text=label).grid(row=row, column=0, sticky='w', padx=8, pady=2)
-            if key in choices:
-                widget = ttk.Combobox(config, textvariable=self.v[key], values=choices[key], state='readonly')
+        self.profile_rows = {'mame': [], 'snes': []}
+        left_fields = [('SSH host / IP:', 'ssh.host'), ('SSH port:', 'ssh.port'), ('User:', 'ssh.username'),
+                       ('Authentication:', 'ssh.auth_mode'), ('Password:', 'ssh.password'),
+                       ('Private key:', 'ssh.private_key'), ('Key passphrase:', 'ssh.key_passphrase'),
+                       ('Remote listing:', 'ssh.remote_listing_mode'),
+                       ('Terminal scrollback lines:', SCROLLBACK_KEY)]
+        # (label, key, profile it belongs to; None = always visible, row group shares one grid row)
+        right_fields = [('Emulator:', 'emulator.active', None, 0),
+                        ('Local MAME ROMs:', 'rom.source', 'mame', 1), ('Local SNES ROMs:', 'snes.rom.source', 'snes', 1),
+                        ('Remote MAME ROMs:', 'ssh.remote_dir', 'mame', 2), ('Remote SNES ROMs:', 'snes.remote_dir', 'snes', 2),
+                        ('MAME content:', 'content.mode', None, 3),
+                        ('Local MAME samples:', 'samples.source', None, 4),
+                        ('Remote MAME samples:', 'samples.remote_dir', None, 5)]
+        browse_keys = ('rom.source', 'samples.source', 'snes.rom.source')
+
+        def field(parent, row, label, key):
+            name = ttk.Label(parent, text=label)
+            name.grid(row=row, column=0, sticky='w', padx=8, pady=2)
+            if key in ENUM_KEYS:
+                widget = ttk.Combobox(parent, textvariable=self.v[key], values=ENUM_KEYS[key], state='readonly')
                 self.combos.append(widget)
                 if key == 'ssh.auth_mode':
                     widget.bind('<<ComboboxSelected>>', lambda event: self.auth_state())
             else:
-                widget = ttk.Entry(config, textvariable=self.v[key],
+                widget = ttk.Entry(parent, textvariable=self.v[key],
                                    show='*' if key in ('ssh.password', 'ssh.key_passphrase') else '')
                 self.settings.append(widget)
             widget.grid(row=row, column=1, sticky='ew', pady=2)
             self.entries[key] = widget
-            if key in ('content.mode', 'samples.source', 'samples.remote_dir'):
-                self.sample_widgets.append(widget)
-            if key in ('rom.source', 'samples.source', 'snes.rom.source'):
+            buttons = []
+            if key in browse_keys:
                 widget.bind('<Return>', lambda event: self.load())
-                button = ttk.Button(config, text='Browse...', command=lambda k=key: self.browse_source(k))
+                button = ttk.Button(parent, text='Browse...', command=lambda k=key: self.browse_source(k))
                 button.grid(row=row, column=2, padx=8)
                 self.settings.append(button)
-                if key == 'samples.source':
-                    self.sample_widgets.append(button)
-        last = len(labels)
-        for row, column, label, command in [(0, 3, 'Load', self.load),
-                (rows['ssh.private_key'], 2, 'Browse...', self.browse_key), (last + 1, 3, 'Save', self.save)]:
-            button = ttk.Button(config, text=label, command=command)
-            button.grid(row=row, column=column, padx=8)
-            self.settings.append(button)
-            if label == 'Browse...':
-                self.key_browse = button
-        for row, key, label in [(last, 'ssh.legacy_rsa', 'Allow legacy SSH RSA (SHA-1)'),
-                (last + 1, 'ssh.save_credentials', 'Save credentials in .properties (plain text)')]:
-            check = ttk.Checkbutton(config, text=label, variable=self.v[key], onvalue='true', offvalue='false')
-            check.grid(row=row, column=1, sticky='w')
+                buttons.append(button)
+            elif key == 'ssh.private_key':
+                self.key_browse = ttk.Button(parent, text='Browse...', command=self.browse_key)
+                self.key_browse.grid(row=row, column=2, padx=8)
+                self.settings.append(self.key_browse)
+            return [name, widget] + buttons
+
+        for row, (label, key) in enumerate(left_fields):
+            field(left, row, label, key)
+        for label, key, profile, row in right_fields:
+            parts = field(right, row, label, key)
+            if profile:
+                self.profile_rows[profile].extend(parts)
+            if key in ('content.mode', 'samples.source', 'samples.remote_dir'):
+                self.sample_widgets.append(self.entries[key])
+            if key == 'samples.source':
+                self.sample_widgets.append(parts[2])
+        row = len(left_fields)
+        for key, label in [('ssh.legacy_rsa', 'Allow legacy SSH RSA (SHA-1)'),
+                           ('ssh.save_credentials', 'Save credentials in .properties (plain text)')]:
+            check = ttk.Checkbutton(left, text=label, variable=self.v[key], onvalue='true', offvalue='false')
+            check.grid(row=row, column=1, columnspan=2, sticky='w')
             self.settings.append(check)
-        self.terminal_button = ttk.Button(config, text='>_ SSH terminal', command=self.open_terminal)
-        self.terminal_button.grid(row=rows['ssh.private_key'] + 1, column=2, columnspan=2, padx=8)
-        ttk.Label(config, text='ssh: POSIX shell / sftp: SFTP subsystem').grid(
-            row=rows['ssh.private_key'] + 2, column=2, columnspan=2)
+            row += 1
+        actions = ttk.Frame(config)
+        actions.grid(row=1, column=0, columnspan=2, sticky='ew', pady=(8, 0))
+        for text, command in (('Load', self.load), ('Save', self.save)):
+            button = ttk.Button(actions, text=text, command=command)
+            button.pack(side='left', padx=8)
+            self.settings.append(button)
+        self.terminal_button = ttk.Button(actions, text='>_ SSH terminal', command=self.open_terminal)
+        self.terminal_button.pack(side='left', padx=8)
+        ttk.Label(actions, text='ssh: POSIX shell / sftp: SFTP subsystem').pack(side='left', padx=8)
         split = ttk.Panedwindow(self.root, orient='horizontal')
         split.pack(fill='both', expand=True, padx=10)
         left, right = ttk.LabelFrame(split), ttk.LabelFrame(split)

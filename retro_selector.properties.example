@@ -1,12 +1,15 @@
 # UTF-8, literal values; local paths relative to script
+emulator.active=mame
 content.mode=roms
-rom.source=roms/
-samples.source=samples/
+rom.source=roms_mame/
+samples.source=samples_mame/
+snes.rom.source=roms_snes/
 ssh.host=192.168.69.53
 ssh.port=22
 ssh.username=root
 ssh.remote_dir=/var/mobile/Media/ROMs/MAME4iOS/roms/
 samples.remote_dir=/var/mobile/Media/ROMs/MAME4iOS/samples/
+snes.remote_dir=/var/mobile/Media/ROMs/Snes9xEX/roms/
 ssh.auth_mode=password
 ssh.private_key=
 ssh.password=

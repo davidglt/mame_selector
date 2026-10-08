@@ -6,10 +6,12 @@ import codecs
 import collections
 import inspect
 import json
+import math
 import os
 from pathlib import Path
 import posixpath
 import queue
+import re
 import shlex
 import stat
 import sys
@@ -140,6 +142,119 @@ def sample_placeholder():
     flag += curve(((96, 63), (100, 44), (82, 48), (81, 34)))
     draw.polygon(flag, fill=color)
     return image.resize((150, 110), Image.Resampling.LANCZOS)
+
+
+SVG_COLORS = {'dark': '#383842', 'light': '#dddde5', 'mid': '#626273', 'blue': '#4386cf',
+              'red': '#d85660', 'green': '#50a878', 'yellow': '#edc54e'}
+PLACEHOLDER_SCALE = 4
+_placeholders = {}
+
+
+def svg_points(data):
+    """Flatten an SVG path (M/L/H/V/C/Z, absolute or relative) into a list of (x, y) points."""
+    tokens = re.findall(r'[A-Za-z]|-?\d*\.?\d+', data)
+    points, index, command = [], 0, ''
+    x = y = start_x = start_y = 0.0
+    while index < len(tokens):
+        if tokens[index].isalpha():
+            command, index = tokens[index], index + 1
+            if command in 'Zz':
+                x, y = start_x, start_y
+                continue
+        relative = command.islower()
+        kind = command.upper()
+        count = {'M': 2, 'L': 2, 'H': 1, 'V': 1, 'C': 6}[kind]
+        args = [float(t) for t in tokens[index:index + count]]
+        index += count
+        if kind in 'ML':
+            nx, ny = (x + args[0], y + args[1]) if relative else (args[0], args[1])
+        elif kind == 'H':
+            nx, ny = (x + args[0] if relative else args[0]), y
+        elif kind == 'V':
+            nx, ny = x, (y + args[0] if relative else args[0])
+        else:
+            pts = [(x, y)] + [(x + a, y + b) if relative else (a, b) for a, b in zip(args[::2], args[1::2])]
+            for step in range(1, 17):
+                t = step / 16
+                weights = ((1 - t) ** 3, 3 * (1 - t) ** 2 * t, 3 * (1 - t) * t * t, t ** 3)
+                points.append(tuple(sum(w * p[axis] for w, p in zip(weights, pts)) for axis in (0, 1)))
+            nx, ny = pts[3]
+        x, y = nx, ny
+        if kind == 'M':
+            start_x, start_y = x, y
+            command = 'l' if relative else 'L'  # further pairs are implicit line-tos
+        if kind != 'C':
+            points.append((x, y))
+    return points
+
+
+def render_placeholder(shapes):
+    """Draw transparent 128x128 SVG-equivalent shapes: ('path'|'ellipse'|'line'|'pill', ...)."""
+    k = PLACEHOLDER_SCALE
+    image = Image.new('RGBA', (128 * k, 128 * k), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    def scaled(points):
+        return [(px * k, py * k) for px, py in points]
+    def outline(points, width, closed=True):
+        if width:
+            points = scaled(points + points[:1] if closed else points)
+            draw.line(points, fill=SVG_COLORS['dark'], width=round(width * k), joint='curve')
+            for px, py in points if closed else (points[0], points[-1]):
+                radius = width * k / 2
+                draw.ellipse((px - radius, py - radius, px + radius, py + radius), fill=SVG_COLORS['dark'])
+    for shape in shapes:
+        kind, fill, width = shape[0], shape[1], shape[2]
+        if kind == 'path':
+            points = svg_points(shape[3])
+            draw.polygon(scaled(points), fill=SVG_COLORS[fill])
+            outline(points, width)
+        elif kind == 'ellipse':
+            cx, cy, rx, ry = shape[3:]
+            draw.ellipse(((cx - rx) * k, (cy - ry) * k, (cx + rx) * k, (cy + ry) * k), fill=SVG_COLORS[fill])
+            if width:
+                draw.ellipse(((cx - rx) * k, (cy - ry) * k, (cx + rx) * k, (cy + ry) * k),
+                             outline=SVG_COLORS['dark'], width=round(width * k))
+        elif kind == 'line':  # round-capped stroke
+            outline(svg_points(shape[3]), width, False)
+        elif kind == 'pill':  # rect with fully rounded ends, rotated about a point
+            x, y, w, h, angle, cx, cy = shape[3:]
+            cos, sin = math.cos(math.radians(angle)), math.sin(math.radians(angle))
+            ends = [(x + h / 2, y + h / 2), (x + w - h / 2, y + h / 2)]
+            ends = [(cx + (px - cx) * cos - (py - cy) * sin, cy + (px - cx) * sin + (py - cy) * cos)
+                    for px, py in ends]
+            ends = scaled(ends)
+            draw.line(ends, fill=SVG_COLORS[fill], width=round(h * k))
+            for px, py in ends:
+                radius = h * k / 2
+                draw.ellipse((px - radius, py - radius, px + radius, py + radius), fill=SVG_COLORS[fill])
+    return image.resize((128, 128), Image.Resampling.LANCZOS)
+
+
+# Shapes equal to assets/snes-sin-caratula.svg and assets/mame-sin-caratula.svg
+PLACEHOLDER_SHAPES = {
+    'snes': [
+        ('path', 'light', 5, 'M42 40h44c20 0 33 17 29 36-3 14-14 22-25 17L75 83H53L38 93C27 98 16 90 13 76 9 57 22 40 42 40Z'),
+        ('path', 'dark', 0, 'M30 53h12v10h10v12H42v10H30V75H20V63h10Z'),
+        ('pill', 'mid', 0, 53, 69, 13, 5, -25, 59, 71),
+        ('pill', 'mid', 0, 67, 69, 13, 5, -25, 73, 71),
+        ('ellipse', 'blue', 2, 96, 53, 6, 6), ('ellipse', 'red', 2, 107, 64, 6, 6),
+        ('ellipse', 'green', 2, 85, 64, 6, 6), ('ellipse', 'yellow', 2, 96, 75, 6, 6)],
+    'mame': [
+        ('path', 'light', 5, 'm23 67 82 0 12 27H11Z'),
+        ('path', 'mid', 5, 'M11 94h106v14H11Z'),
+        ('ellipse', 'mid', 0, 40, 78, 15, 5),
+        ('line', 'dark', 7, 'M40 76V45'),
+        ('ellipse', 'red', 5, 40, 34, 13, 13),
+        ('ellipse', 'blue', 2, 77, 75, 7, 5), ('ellipse', 'yellow', 2, 96, 75, 7, 5),
+        ('ellipse', 'green', 2, 84, 86, 7, 5)],
+}
+
+
+def emulator_placeholder(emulator):
+    """Transparent 'no cover' icon for a profile, rendered once and cached."""
+    if emulator not in _placeholders:
+        _placeholders[emulator] = render_placeholder(PLACEHOLDER_SHAPES[emulator])
+    return _placeholders[emulator].copy()
 
 
 def atomic_write(path, text):
@@ -811,7 +926,7 @@ class App:
         self.tree.heading('name', text='Remote ZIP filename' if self.emulator() == 'mame' else 'Remote filename')
 
     def profile_state(self):
-        """Samples belong to MAME only: disable their controls for SNES (settings are kept)."""
+        """Samples belong to MAME only: their controls are hidden for SNES (settings are kept)."""
         for profile, widgets in self.profile_rows.items():
             for widget in widgets:
                 if profile == self.emulator():
@@ -871,13 +986,13 @@ class App:
                        ('Private key:', 'ssh.private_key'), ('Key passphrase:', 'ssh.key_passphrase'),
                        ('Remote listing:', 'ssh.remote_listing_mode'),
                        ('Terminal scrollback lines:', SCROLLBACK_KEY)]
-        # (label, key, profile it belongs to; None = always visible, row group shares one grid row)
+        # (label, key, profile it belongs to; None = always visible; same row = one grid row)
         right_fields = [('Emulator:', 'emulator.active', None, 0),
                         ('Local MAME ROMs:', 'rom.source', 'mame', 1), ('Local SNES ROMs:', 'snes.rom.source', 'snes', 1),
                         ('Remote MAME ROMs:', 'ssh.remote_dir', 'mame', 2), ('Remote SNES ROMs:', 'snes.remote_dir', 'snes', 2),
-                        ('MAME content:', 'content.mode', None, 3),
-                        ('Local MAME samples:', 'samples.source', None, 4),
-                        ('Remote MAME samples:', 'samples.remote_dir', None, 5)]
+                        ('MAME content:', 'content.mode', 'mame', 3),
+                        ('Local MAME samples:', 'samples.source', 'mame', 4),
+                        ('Remote MAME samples:', 'samples.remote_dir', 'mame', 5)]
         browse_keys = ('rom.source', 'samples.source', 'snes.rom.source')
 
         def field(parent, row, label, key):
@@ -1158,12 +1273,12 @@ class App:
                 with Image.open(path.with_suffix('.png')) as source:
                     image = ImageOps.exif_transpose(source).convert('RGBA')
                     image.thumbnail((150, 110), Image.Resampling.LANCZOS)
-            except (OSError, ValueError):
+            except (OSError, ValueError, Image.DecompressionBombError):
                 if self.emulator() == 'mame' and self.v['content.mode'].get() == 'samples':
                     image = sample_placeholder()
                 else:
-                    image = Image.new('RGBA', (150, 110), '#ddd')
-                    ImageDraw.Draw(image).text((40, 45), 'No image', fill='#555')
+                    image = emulator_placeholder(self.emulator())
+                    image.thumbnail((150, 110), Image.Resampling.LANCZOS)
             background = Image.new('RGBA', (150, 110), '#eee')
             background.alpha_composite(image, ((150 - image.width) // 2, (110 - image.height) // 2))
             photo = ImageTk.PhotoImage(background.convert('RGB'))

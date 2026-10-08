@@ -86,17 +86,17 @@ The readonly `Emulator` selector chooses the active profile. SSH host, port, use
 | `Remote MAME samples` | `samples.remote_dir` | `/var/mobile/Media/ROMs/MAME4iOS/samples/` | MAME |
 | `Remote SNES ROMs` | `snes.remote_dir` | `/var/mobile/Media/ROMs/Snes9xEX/roms/` | SNES |
 
-The configuration area has two columns. The left column holds the shared SSH settings (host, port, user, authentication, password or key, listing mode, terminal scrollback lines). The right column holds the `Emulator` selector, the local and remote ROM directories of the selected emulator (only the active emulator's fields are shown), then `MAME content` and the local and remote samples directories, which are MAME-only. A bottom row holds `Load`, `Save` and `>_ SSH terminal`.
+The configuration area has two columns. The left column holds the shared SSH settings (host, port, user, authentication, password or key, listing mode, terminal scrollback lines). The right column holds the `Emulator` selector, the local and remote ROM directories of the selected emulator (only the active emulator's fields are shown), then, for MAME only, `MAME content` and the local and remote samples directories. A bottom row holds `Load`, `Save` and `>_ SSH terminal`.
 
 The active profile is stored in `emulator.active` (`mame` or `snes`). Editing one path never changes another. Use the `Browse...` buttons to change local paths; browsing the active source loads it, browsing another only updates its setting.
 
 ### MAME: ROMs and Samples
 
-In the MAME profile the readonly `MAME content` selector (`content.mode`, `roms` or `samples`) chooses between the ROM and sample collections. Samples (local and remote) belong exclusively to MAME. When SNES is active, the `MAME content`, `MAME samples source` and `Remote MAME samples` controls are disabled (not deleted) and their saved values are preserved.
+In the MAME profile the readonly `MAME content` selector (`content.mode`, `roms` or `samples`) chooses between the ROM and sample collections. Samples (local and remote) belong exclusively to MAME. When SNES is active, the `MAME content`, samples source (with its `Browse...` button) and remote samples controls are hidden entirely, since samples do not exist for SNES. Their saved values are preserved and reappear when you switch back to MAME.
 
 ### SNES
 
-The SNES profile browses and transfers files with these extensions (case-insensitive): `.sfc`, `.smc`, `.swc`, `.fig` and `.zip`. This is the list the application filters on; it does not check that the emulator or any device accepts a particular file. Files are copied and deleted as they are, with no conversion, header removal, renaming or unzipping. No MAME sample matching or MAME-specific messages (BIOS/parent warnings) are applied. Local files are shown by full filename; an optional PNG with the same stem (`game.png` for `game.sfc`) is used as a thumbnail, otherwise `No image` is shown.
+The SNES profile browses and transfers files with these extensions (case-insensitive): `.sfc`, `.smc`, `.swc`, `.fig` and `.zip`. This is the list the application filters on; it does not check that the emulator or any device accepts a particular file. Files are copied and deleted as they are, with no conversion, header removal, renaming or unzipping. No MAME sample matching or MAME-specific messages (BIOS/parent warnings) are applied. Local files are shown by full filename; covers are optional: an optional PNG with the same stem (`game.png` for `game.sfc`) is used as a thumbnail when present and readable.
 
 ### Switching profiles
 
@@ -126,7 +126,7 @@ roms/
 └── galaga.png
 ```
 
-Only files with the profile's extensions (`.zip` for MAME; see SNES above) directly inside the active source are scanned; subdirectories are not scanned. Missing or unreadable PNGs display `No image` in ROMs mode and a generic `Samples` placeholder in Samples mode. Sample ZIPs do not require PNGs. Images remain local and are not copied.
+Only files with the profile's extensions (`.zip` for MAME; see SNES above) directly inside the active source are scanned; subdirectories are not scanned. Missing or unreadable PNGs never cause errors; an actual cover always takes precedence, otherwise a built-in placeholder is shown: an SNES controller for SNES, an arcade panel for MAME ROMs, and the musical-note placeholder for MAME samples. Nothing is downloaded or generated. Sample ZIPs do not require PNGs. Images remain local and are not copied.
 
 ### Search and multiple selection
 

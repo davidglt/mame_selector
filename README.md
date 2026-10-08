@@ -79,7 +79,7 @@ Alternatively, run directly:
 3. Check the matching local source and click `Load` if you have edited its path.
 4. Enter the SSH host, port, username, and credentials; check the matching remote destination.
 5. Select the remote listing mode and enable legacy RSA only if required.
-6. Click `Refresh` in the right panel.
+6. Click `Refresh` in the right panel (the remote list also loads automatically when you switch emulator or MAME content; see below).
 7. Verify any new server fingerprint through a trusted channel before accepting it.
 8. Mark local files supported by the selected profile and click `Copy selected`.
 9. Review the selected profile (and MAME content mode, when applicable), destination, and complete batch list before confirming.
@@ -114,7 +114,7 @@ The SNES profile browses and transfers files with these extensions (case-insensi
 
 ### Switching profiles
 
-Changing `Emulator` (or `MAME content`) clears local and remote marks, resets the search filters and pagination, invalidates the previous remote list, and loads the selected profile's local source. Click `Refresh` to list the new profile's remote directory. A listing from one profile cannot authorize deletion in another, and destinations are never mixed.
+Changing `Emulator` (or `MAME content`) clears local and remote marks, resets the search filters and pagination, invalidates the previous remote list, and loads the selected profile's local source. The new profile's remote directory is then listed automatically (see [Remote listing](#remote-listing)). A listing from one profile cannot authorize deletion in another, and destinations are never mixed.
 
 Switching is blocked while an operation, batch confirmation or the SSH terminal is active. Copy, list and delete operations capture the profile, local source, remote destination and selection before asynchronous work starts; later changes in the interface do not affect a running operation. Copy and deletion confirmations show the profile and destination.
 
@@ -172,7 +172,11 @@ Only selected files are copied. MAME ROMs mode does not automatically copy sampl
 
 The right panel lists files with the active profile's supported extensions in its remote directory (`.zip` for MAME; the SNES extensions are listed above). File presence does not prove that the emulator can use the contents.
 
-Click `Refresh` to load the list. Its search works independently of the local search and matches the remote filename. Changing the content mode, host, port, username, either configured remote directory, or listing mode invalidates the old list and clears remote marks.
+Click `Refresh` to load the list. The application does not connect at startup, and there is no persistent auto-connect: nothing contacts the server until you click `Refresh`, copy, delete or open the terminal, or change the emulator or content. After you change `Emulator` or `MAME content`, the list is refreshed automatically, but only if the connection settings are usable (valid host, port, username, absolute remote directory, existing local source directory, an entered password for password authentication or an existing private key for key authentication). Otherwise the status line says the list was not loaded and you can fix the settings and click `Refresh`. Automatic refreshes use the same connection code, so an unknown server still shows the host-key prompt, changed keys are rejected, and failures are shown in the status line instead of a dialog. Editing host, port, username, directory or listing mode does not connect on each keystroke; it only invalidates the list, and you click `Refresh`. There is no periodic polling. Closing the SSH terminal also leaves the list invalidated until you click `Refresh`. Refreshes never overlap, and a result that arrives after the settings, profile or directory changed (or after the list was invalidated) is discarded.
+
+Below the file count, `Disk space` shows the space available to the SSH user, the total size and the percentage free for the filesystem that contains the active remote directory (not an assumed root filesystem), for example `Disk space: 12.3 GiB available of 58.0 GiB (21% free)`. It is measured on the same connection as each listing, so it updates with `Refresh`, with automatic refreshes and after a successful copy or deletion (through the existing post-operation refresh). In `sftp` mode the SFTP filesystem-statistics extension (`statvfs@openssh.com`) is tried first; if the server does not support it, or in `ssh` mode, the read-only command `df -Pk '<directory>'` (directory quoted) is run. If neither works, or the output cannot be parsed, it shows `Disk space: unavailable`; listing and transfers are not affected. It shows `not loaded` before a listing or after the target changes, and `loading...` during a refresh. Values are approximate: they are a snapshot, and quotas, reserved blocks or unusual filesystems may differ from what other tools report. The percentage and sizes use binary units (KiB, MiB, GiB).
+
+Its search works independently of the local search and matches the remote filename. Changing the content mode, host, port, username, either configured remote directory, or listing mode invalidates the old list and clears remote marks.
 
 Choose a listing mode explicitly:
 
@@ -324,7 +328,7 @@ Check that each optional PNG is readable, shares the ROM or sample filename stem
 
 ### The remote panel is empty after switching modes
 
-Switching modes invalidates the previous list. Check `Remote ROMs` or `Remote samples` for the selected mode, then click `Refresh`. A missing or inaccessible remote directory produces an error; it is not created automatically.
+Switching modes invalidates the previous list and, when the connection settings are usable, reloads it automatically. If it stays empty, check `Remote ROMs` or `Remote samples` for the selected mode, then click `Refresh`. A missing or inaccessible remote directory produces an error; it is not created automatically.
 
 ### Authentication fails
 

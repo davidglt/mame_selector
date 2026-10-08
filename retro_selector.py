@@ -257,6 +257,46 @@ def emulator_placeholder(emulator):
     return _placeholders[emulator].copy()
 
 
+SPACE_NOT_LOADED = 'Disk space: not loaded'
+SPACE_LOADING = 'Disk space: loading...'
+DF_LINE = re.compile(r'(\d+)\s+(\d+)\s+(\d+)\s+\d+%\s+/')
+
+
+def format_size(size):
+    value = float(size)
+    for unit in ('B', 'KiB', 'MiB', 'GiB', 'TiB'):
+        if value < 1024:
+            return f'{int(value)} B' if unit == 'B' else f'{value:.1f} {unit}'
+        value /= 1024
+    return f'{value:.1f} PiB'
+
+
+def format_space(space):
+    """space is (available, total) in bytes, or None when it could not be determined."""
+    if space is None:
+        return 'Disk space: unavailable'
+    available, total = space
+    return f'Disk space: {format_size(available)} available of {format_size(total)} ({available * 100 / total:.0f}% free)'
+
+
+def vfs_space(attrs):
+    unit = attrs.frsize or attrs.bsize
+    if not unit or not attrs.blocks or attrs.bavail > attrs.blocks:
+        return None
+    return attrs.bavail * unit, attrs.blocks * unit
+
+
+def parse_df(text):
+    """Parse `df -Pk` output (1024-byte blocks); returns (available, total) in bytes or None."""
+    for line in reversed(text.splitlines()):
+        match = DF_LINE.search(line)
+        if match:
+            total, _, available = (int(group) * 1024 for group in match.groups())
+            if total and available <= total:
+                return available, total
+    return None
+
+
 def atomic_write(path, text):
     temporary = path.with_suffix(path.suffix + '.tmp')
     temporary.write_text(text, encoding='utf-8')
@@ -884,6 +924,8 @@ class App:
         self.marks, self.remote_marks = set(), set()
         self.loaded = self.remote_target = None
         self.page, self.job = 0, None
+        self.generation, self.auto_job = 0, None
+        self.space = tk.StringVar(value=SPACE_NOT_LOADED)
         self.images, self.cards, self.remote_rows = [], {}, {}
         self.search, self.remote_search = tk.StringVar(), tk.StringVar()
         self.count, self.remote_count = tk.StringVar(), tk.StringVar()
@@ -892,7 +934,7 @@ class App:
         for key in ('ssh.host', 'ssh.port', 'ssh.username', 'ssh.remote_dir',
                     'samples.remote_dir', 'snes.remote_dir', 'ssh.remote_listing_mode'):
             self.v[key].trace_add('write', self.invalidate_remote)
-        self.v['content.mode'].trace_add('write', self.mode_changed)
+        self.v['content.mode'].trace_add('write', self.content_changed)
         self.v['emulator.active'].trace_add('write', self.profile_changed)
         self.search.trace_add('write', self.schedule_filter)
         self.remote_search.trace_add('write', lambda *args: self.render_remote())
@@ -946,6 +988,11 @@ class App:
             return
         self.active_profile = self.emulator()
         self.mode_changed()
+        self.auto_refresh()
+
+    def content_changed(self, *args):
+        self.mode_changed()
+        self.auto_refresh()
 
     def cancel_filter(self):
         if self.job is not None:
@@ -1076,6 +1123,7 @@ class App:
                 self.settings.append(button)
         ttk.Label(left, textvariable=self.count, padding=8).pack(anchor='w')
         ttk.Label(right, textvariable=self.remote_count, padding=8).pack(anchor='w')
+        ttk.Label(right, textvariable=self.space, padding=(8, 0)).pack(anchor='w')
         area = ttk.Frame(left)
         area.pack(fill='both', expand=True)
         self.canvas = tk.Canvas(area, highlightthickness=0)
@@ -1356,8 +1404,10 @@ class App:
                      ('ssh.host', 'ssh.port', 'ssh.username', remote_key, 'ssh.remote_listing_mode'))
 
     def invalidate_remote(self, *args):
+        self.generation += 1
         self.remote, self.remote_target = [], None
         self.remote_marks.clear()
+        self.space.set(SPACE_NOT_LOADED)
         self.render_remote()
 
     def render_remote(self):
@@ -1387,17 +1437,34 @@ class App:
             self.toggle(self.remote_rows[row], True)
         return 'break'
 
-    def refresh(self):
+    def auto_refresh(self):
+        if self.auto_job is not None:
+            self.root.after_cancel(self.auto_job)
+        self.auto_job = self.root.after(50, self.run_auto_refresh)
+
+    def run_auto_refresh(self):
+        self.auto_job = None
+        if not self.busy and self.terminal is None:
+            self.refresh(automatic=True)
+
+    def refresh(self, automatic=False):
         if self.busy:
             return
         try:
             values = self.values()
+            if automatic and values['ssh.auth_mode'] == 'password' and not values['ssh.password']:
+                raise ValueError('Enter the SSH password')
         except (OSError, ValueError) as error:
-            messagebox.showerror('Configuration', str(error))
+            if automatic:
+                self.status.set(f'Remote list not loaded automatically: {error}. Click Refresh.')
+            else:
+                messagebox.showerror('Configuration', str(error))
             return
         self.set_busy(True)
+        self.space.set(SPACE_LOADING)
         self.status.set('Loading remote list...')
-        threading.Thread(target=self.list_worker, args=(values, self.signature()), daemon=True).start()
+        threading.Thread(target=self.list_worker, args=(values, self.signature(), self.generation, automatic),
+                         daemon=True).start()
 
     def approve(self, endpoint, key):
         ready, answer = threading.Event(), {'yes': False}
@@ -1435,6 +1502,22 @@ class App:
                            passphrase=values['ssh.key_passphrase'] or None, preferred_auth='publickey')
         return await asyncssh.connect(**options)
 
+    @staticmethod
+    async def space_async(connection, directory, sftp=None):
+        """Available/total bytes of the filesystem holding directory, or None; never raises."""
+        if sftp is not None:
+            try:
+                space = vfs_space(await asyncio.wait_for(sftp.statvfs(directory), 20))
+                if space:
+                    return space
+            except Exception:
+                pass
+        try:
+            response = await connection.run(f'df -Pk {shlex.quote(directory)}', check=False, timeout=20)
+            return parse_df(response.stdout) if response.exit_status == 0 else None
+        except Exception:
+            return None
+
     async def list_async(self, values):
         directory = values['operation.remote_dir']
         extensions = profile_extensions(values['operation.emulator'])
@@ -1448,6 +1531,7 @@ class App:
                         attrs = await sftp.stat(posixpath.join(directory, name))
                         if self.regular(attrs):
                             result.append(name)
+                    space = await self.space_async(connection, directory, sftp)
             else:
                 command = (f'directory={shlex.quote(directory)}; '
                     '[ -d "$directory" ] || { printf "%s\\n" "Directory not found" >&2; exit 1; }; '
@@ -1456,19 +1540,20 @@ class App:
                     'case "$path" in ' + shell_patterns(extensions) + ') printf "%s\\000" "${path##*/}" ;; esac; done; exit 0')
                 response = await connection.run(command, check=True, timeout=60)
                 result = [name for name in response.stdout.split('\0') if name]
-            return sorted(result, key=str.casefold)
+                space = await self.space_async(connection, directory)
+            return sorted(result, key=str.casefold), space
 
     @staticmethod
     def regular(attrs):
         return ((attrs.permissions is not None and stat.S_ISREG(attrs.permissions))
                 or (attrs.permissions is None and attrs.type == 1))
 
-    def list_worker(self, values, target):
+    def list_worker(self, values, target, generation, automatic=False):
         try:
-            names = asyncio.run(asyncio.wait_for(self.list_async(values), 180))
-            self.events.put(('listed', names, target))
+            names, space = asyncio.run(asyncio.wait_for(self.list_async(values), 180))
+            self.events.put(('listed', names, target, generation, space))
         except Exception as error:
-            self.events.put(('list_error', f'{type(error).__name__}: {error}'))
+            self.events.put(('list_error', f'{type(error).__name__}: {error}', generation, automatic))
 
     def report(self, title, text, action=None):
         window = tk.Toplevel(self.root)
@@ -1732,16 +1817,28 @@ class App:
                         self.render_remote()
                     self.update_marks()
                 elif kind == 'listed':
-                    if event[2] == self.signature():
-                        self.remote, self.remote_target = event[1], event[2]
+                    _, names, target, generation, space = event
+                    current = generation == self.generation and target == self.signature()
+                    if current:
+                        self.remote, self.remote_target = names, target
+                        self.space.set(format_space(space))
                         self.render_remote()
+                    else:
+                        self.space.set(SPACE_NOT_LOADED)
                     self.set_busy(False)
-                    self.status.set('Remote list refreshed.')
+                    self.status.set('Remote list refreshed.' if current else 'Remote list discarded: settings changed.')
                 elif kind == 'list_error':
-                    self.invalidate_remote()
+                    _, message, generation, automatic = event
+                    current = generation == self.generation
+                    if current:
+                        self.invalidate_remote()
+                    else:
+                        self.space.set(SPACE_NOT_LOADED)
                     self.set_busy(False)
-                    self.status.set('Remote listing failed.')
-                    messagebox.showerror('Remote listing', event[1])
+                    self.status.set(f'Remote listing failed: {message}' if automatic and current
+                                    else 'Remote listing failed.' if current else 'Remote list discarded: settings changed.')
+                    if not automatic and current:
+                        messagebox.showerror('Remote listing', message)
                 elif kind == 'done':
                     result = event[1]
                     marks = self.remote_marks if result['deleting'] else self.marks

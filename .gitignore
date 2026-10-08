@@ -11,6 +11,7 @@ dist/
 /roms_mame/
 /roms_snes/
 /samples/
+/samples_mame/
 # Local configuration and server identities
 retro_selector.properties
 retro_selector.properties.tmp

@@ -28,7 +28,7 @@ CONFIG = BASE / 'retro_selector.properties'
 HOSTS = BASE / 'retro_selector_host_keys.json'
 DEFAULTS = {
     'emulator.active': 'mame', 'content.mode': 'roms', 'rom.source': 'roms_mame/',
-    'samples.source': 'samples/', 'snes.rom.source': 'roms_snes/',
+    'samples.source': 'samples_mame/', 'snes.rom.source': 'roms_snes/',
     'ssh.host': '192.168.69.53', 'ssh.port': '22', 'ssh.username': 'root',
     'ssh.remote_dir': '/var/mobile/Media/ROMs/MAME4iOS/roms/',
     'samples.remote_dir': '/var/mobile/Media/ROMs/MAME4iOS/samples/',

@@ -2,9 +2,9 @@
 
 Formerly MAME Selector. The intended repository name is `retro_selector`; the GitHub repository rename is a separate administrative action that this change does not perform, so current repository links keep working.
 
-Desktop MAME and SNES ROM and sample browser and remote ZIP manager built with Python, Tkinter, Pillow, and AsyncSSH.
+Desktop browser for MAME ROM/sample ZIPs and SNES ROM files, with remote file management, built with Python, Tkinter, Pillow, and AsyncSSH.
 
-Browse a local collection, select multiple ZIP files, transfer them over SCP, and list or delete selected remote ZIPs over SSH. Switch between MAME (ROMs/Samples) and SNES profiles in the same application: all functionality remains in `retro_selector.py`, with no second Python program.
+Browse local MAME ZIPs or supported SNES ROM files, transfer selected files over SCP, and list or delete matching remote files over SSH. Switch between MAME (ROMs/Samples) and SNES profiles in the same application: all functionality remains in `retro_selector.py`, with no second Python program.
 
 ## Project status
 
@@ -81,11 +81,11 @@ Alternatively, run directly:
 5. Select the remote listing mode and enable legacy RSA only if required.
 6. Click `Refresh` in the right panel.
 7. Verify any new server fingerprint through a trusted channel before accepting it.
-8. Mark local ZIPs and click `Copy selected`.
-9. Review the content mode, destination, and complete batch list before confirming.
-10. Click `Save` if you want to preserve the configuration, including the selected content mode.
+8. Mark local files supported by the selected profile and click `Copy selected`.
+9. Review the selected profile (and MAME content mode, when applicable), destination, and complete batch list before confirming.
+10. Click `Save` if you want to preserve the configuration and selected profile settings.
 
-For the first deletion test, use remote ZIP files which you can safely recreate.
+For the first deletion test, use remote files for the selected profile which you can safely recreate.
 
 ## Emulator profiles (MAME / SNES)
 
@@ -100,7 +100,7 @@ The readonly `Emulator` selector chooses the active profile. SSH host, port, use
 | `Remote MAME samples` | `samples.remote_dir` | `/var/mobile/Media/ROMs/MAME4iOS/samples/` | MAME |
 | `Remote SNES ROMs` | `snes.remote_dir` | `/var/mobile/Media/ROMs/Snes9xEX/roms/` | SNES |
 
-The configuration area has two columns. The left column holds the shared SSH settings (host, port, user, authentication, password or key, listing mode, terminal scrollback lines). The right column holds the `Emulator` selector, the local and remote ROM directories of the selected emulator (only the active emulator's fields are shown), then, for MAME only, `MAME content` and the local and remote samples directories. A bottom row holds `Load`, `Save` and `>_ SSH terminal`.
+The configuration area has two columns. The left column holds the shared SSH settings (host, port, user, authentication, password or key, legacy RSA and credential-saving options, listing mode, terminal scrollback lines). The right column holds the `Emulator` selector, the local and remote ROM directories of the selected emulator (only the active emulator's fields are shown), then, for MAME only, `MAME content` and the local and remote samples directories. A bottom row holds `Load`, `Save` and `>_ SSH terminal`.
 
 The active profile is stored in `emulator.active` (`mame` or `snes`). Editing one path never changes another. Use the `Browse...` buttons to change local paths; browsing the active source loads it, browsing another only updates its setting.
 
@@ -128,7 +128,7 @@ To keep your settings, manually rename your local, untracked `mame_selector.prop
 
 ### Existing configuration files
 
-Old property files from earlier versions of this application are supported once renamed as described above. Existing `rom.source`, `ssh.remote_dir`, `samples.source`, `samples.remote_dir` and `content.mode` settings stay MAME settings and are not replaced by SNES values. Missing keys use defaults: `emulator.active=mame`, `snes.rom.source=roms_snes/` and `snes.remote_dir=/var/mobile/Media/ROMs/Snes9xEX/roms/`. A legacy file (without `emulator.active` or `snes.*` keys) that lacks `rom.source` keeps the previous `roms/` value for MAME; the new `roms_mame/` default applies only when there is no configuration file. A file without `terminal.scrollback_lines` uses the default `10000`.
+Old property files from earlier versions of this application are supported once renamed as described above. Existing `rom.source`, `ssh.remote_dir`, `samples.source`, `samples.remote_dir` and `content.mode` settings stay MAME settings and are not replaced by SNES values. Missing keys use defaults, including `emulator.active=mame`, `snes.rom.source=roms_snes/`, `snes.remote_dir=/var/mobile/Media/ROMs/Snes9xEX/roms/` and `terminal.scrollback_lines=10000`. For MAME ROMs, a missing `rom.source` resolves to the previous `roms/` value when the configuration contains at least one recognized setting but contains none of `rom.source`, `emulator.active` or any `snes.*` setting. Otherwise it resolves to `roms_mame/`, including when no recognized settings are loaded (no file, or an empty, comment-only or unrecognized-only file). An explicitly configured `rom.source` is kept unchanged.
 
 The default local MAME samples folder is now `samples_mame/` (previously `samples/`). An explicitly configured `samples.source` is preserved unchanged; only new or missing values use the new default. The application never renames, moves or deletes your files: either rename your existing local `samples/` folder to `samples_mame/` yourself, or set `MAME samples source` to the existing folder. `samples.remote_dir` is unchanged.
 
@@ -141,24 +141,24 @@ Relative local sources are resolved against the directory containing `retro_sele
 Place optional PNG thumbnails beside their corresponding ROM files, with the same filename stem:
 
 ```text
-roms/
+roms_mame/
 ├── galaxian.zip
 ├── galaxian.png
 ├── galaga.zip
 └── galaga.png
 ```
 
-Only files with the profile's extensions (`.zip` for MAME; see SNES above) directly inside the active source are scanned; subdirectories are not scanned. Missing or unreadable PNGs never cause errors; an actual cover always takes precedence, otherwise a built-in placeholder is shown: an SNES controller for SNES, an arcade panel for MAME ROMs, and the musical-note placeholder for MAME samples. Nothing is downloaded or generated. Sample ZIPs do not require PNGs. Images remain local and are not copied.
+Only files with the profile's extensions (`.zip` for MAME; see SNES above) directly inside the active source are scanned; subdirectories are not scanned. Missing or unreadable PNGs never cause errors; an actual cover always takes precedence, otherwise a built-in placeholder is shown: an SNES controller for SNES, an arcade panel for MAME ROMs, and the musical-note placeholder for MAME samples. Nothing is downloaded or generated. MAME sample ZIPs do not require PNGs. Images remain local and are not copied.
 
 The placeholders are drawn with Pillow from shapes equivalent to the SVG sources in `assets/` (`snes-sin-caratula.svg`, `mame-sin-caratula.svg`); the SVG files are not loaded at runtime and no SVG library is needed.
 
 ### Search and multiple selection
 
-- Local search ignores case and matches the ZIP filename without its extension.
-- An empty search includes all local ZIPs, displayed in pages of 40.
-- Click a thumbnail or its graphical checkbox to mark or unmark a ZIP.
+- Local search ignores case and matches the filename without its extension.
+- An empty search includes all supported local files, displayed in pages of 40.
+- Click a thumbnail or its graphical checkbox to mark or unmark a file.
 - Marks survive search changes and pagination within the same content mode.
-- `Select all matches` includes matching ZIPs on every page.
+- `Select all matches` includes matching files on every page.
 - `Clear marks` clears the entire selection, including hidden marks.
 - The counter reports marks outside the current filter.
 - Loading a different source or changing content mode clears the previous selection.
@@ -166,17 +166,17 @@ The placeholders are drawn with Pillow from shapes equivalent to the SVG sources
 
 ### Batch copying
 
-`Copy selected` displays the content mode, complete file list, including marks hidden by the search filter, and the destination before transfer.
+`Copy selected` displays the selected profile and content mode, complete file list (including marks hidden by the search filter), and destination before transfer.
 
 Files are copied sequentially over one authenticated SSH connection. Existing remote files with the same names may be overwritten. Successful files are unmarked; failed and pending files remain marked for retry.
 
 Per-file errors allow the batch to continue while the connection remains usable. Connection loss or timeout stops the batch. The result window distinguishes completed, failed, and pending files.
 
-Only selected ZIPs are copied. ROMs mode does not automatically copy samples; select Samples mode to manage those ZIPs separately. Parent ROMs, BIOS, sample dependencies, CHDs, and emulator compatibility are not checked or resolved.
+Only selected files are copied. MAME ROMs mode does not automatically copy samples; select Samples mode to manage those ZIPs separately. Parent ROMs, BIOS, sample dependencies, CHDs, and emulator compatibility are not checked or resolved.
 
 ## Remote listing
 
-The right panel lists ZIP files present in the active mode's remote directory. File presence does not prove that the emulator can use the contents.
+The right panel lists files with the active profile's supported extensions in its remote directory (`.zip` for MAME; the SNES extensions are listed above). File presence does not prove that the emulator can use the contents.
 
 Click `Refresh` to load the list. Its search works independently of the local search and matches the remote filename. Changing the content mode, host, port, username, either configured remote directory, or listing mode invalidates the old list and clears remote marks.
 
@@ -204,7 +204,7 @@ Remote marks use textual checkbox indicators `[ ]` and `[x]` in the `Mark` colum
 
 `Delete selected` displays the content mode, host, username, port, directory, and complete filename list before requesting confirmation. Hidden marks are included.
 
-Deletion is permanent and does not modify local files. It targets exact ZIP paths without recursive deletion or wildcard deletion. Directories and symbolic links are rejected. BIOS, parent ROMs, and sample dependencies are not detected: removing required ZIPs can affect other games.
+Deletion is permanent and does not modify local files. It targets exact selected file paths without recursive or wildcard deletion. Directories and symbolic links are rejected. For MAME, BIOS, parent ROMs, and sample dependencies are not detected: removing required ZIPs can affect other games.
 
 Successful deletions are unmarked. Failed or pending files remain marked if they still exist after refreshing. The result window reports individual outcomes, and the remote list refreshes after deletion or successful copying.
 
@@ -214,7 +214,7 @@ A timeout or disconnection can leave an individual outcome uncertain. Check the 
 
 ### Copying
 
-The global bar gives equal weight to each file. Within the current file, it uses that file's transfer percentage. It is not the percentage of all bytes in the batch: a small ZIP and a large ZIP have the same global weight.
+The global bar gives equal weight to each file. Within the current file, it uses that file's transfer percentage. It is not the percentage of all bytes in the batch: a small file and a large file have the same global weight.
 
 ### Deletion
 
@@ -287,7 +287,7 @@ Live vi/top behavior on the author's device has not been verified.
 | File | Purpose |
 | --- | --- |
 | `retro_selector.py` | Single application file, including ROMs/Samples mode switching, both panels and the SSH terminal. |
-| `retro_selector.cmd` | Unchanged Windows launcher for `retro_selector.py`. |
+| `retro_selector.cmd` | Windows CMD launcher, updated to run `retro_selector.py`. |
 | `requirements.txt` | Python dependencies. |
 | `retro_selector.properties.example` | Credential-free configuration template for both modes. |
 | `assets/` | Original SVG sources of the SNES and MAME no-cover placeholders. |
@@ -318,9 +318,9 @@ If you do not use `.venv`, use `python -m pip install -r requirements.txt`.
 
 When updating an existing installation, run the same command again to install the new `pyte` dependency (or `python -m pip install "pyte>=0.8.2"`).
 
-### No local ZIPs appear
+### No local files appear
 
-Check `Content` and its matching source field (`ROM source` or `Samples source`). The directory must exist and contain ZIP files directly inside it. Click `Load` after editing the active path. Switching modes intentionally clears previous files and marks.
+Check `Emulator` and, for MAME, `MAME content`, along with the matching source field. The directory must exist and contain files directly inside it with extensions supported by the active profile (`.zip` for MAME; see SNES above). Click `Load` after editing the active path. Switching modes intentionally clears previous files and marks.
 
 ### Remote operations require a valid local source
 
@@ -328,7 +328,7 @@ The current implementation uses shared configuration validation. `Refresh`, remo
 
 ### Thumbnails are missing
 
-Check that each optional PNG is readable, shares the ZIP filename stem, and is stored in the same directory. Sample ZIPs can be used without PNGs; the musical-note placeholder is expected for samples, and the emulator placeholder for ROMs without a cover.
+Check that each optional PNG is readable, shares the ROM or sample filename stem, and is stored in the same directory. MAME sample ZIPs can be used without PNGs; the musical-note placeholder is expected for samples, and the emulator placeholder for ROMs without a cover.
 
 ### The remote panel is empty after switching modes
 

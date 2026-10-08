@@ -927,9 +927,10 @@ class App:
 
     def profile_state(self):
         """Samples belong to MAME only: their controls are hidden for SNES (settings are kept)."""
-        for profile, widgets in self.profile_rows.items():
+        current = (self.emulator(), self.v['content.mode'].get() if self.emulator() == 'mame' else None)
+        for (profile, mode), widgets in self.profile_rows.items():
             for widget in widgets:
-                if profile == self.emulator():
+                if profile == current[0] and mode in (None, current[1]):
                     widget.grid()
                 else:
                     widget.grid_remove()
@@ -944,7 +945,6 @@ class App:
                 self.v['emulator.active'].set(self.active_profile)
             return
         self.active_profile = self.emulator()
-        self.profile_state()
         self.mode_changed()
 
     def cancel_filter(self):
@@ -953,6 +953,7 @@ class App:
             self.job = None
 
     def mode_changed(self, *args):
+        self.profile_state()
         self.cancel_filter()
         self.marks.clear()
         self.roms, self.filtered = [], []
@@ -980,19 +981,21 @@ class App:
         for column in (left, right):
             column.columnconfigure(1, weight=1)
         self.entries = {}
-        self.profile_rows = {'mame': [], 'snes': []}
+        self.profile_rows = {('mame', None): [], ('mame', 'roms'): [], ('mame', 'samples'): [], ('snes', None): []}
         left_fields = [('SSH host / IP:', 'ssh.host'), ('SSH port:', 'ssh.port'), ('User:', 'ssh.username'),
                        ('Authentication:', 'ssh.auth_mode'), ('Password:', 'ssh.password'),
                        ('Private key:', 'ssh.private_key'), ('Key passphrase:', 'ssh.key_passphrase'),
                        ('Remote listing:', 'ssh.remote_listing_mode'),
                        ('Terminal scrollback lines:', SCROLLBACK_KEY)]
-        # (label, key, profile it belongs to; None = always visible; same row = one grid row)
+        # (label, key, (emulator, MAME content) it is shown for; None = always visible; rows 2-3 are shared)
         right_fields = [('Emulator:', 'emulator.active', None, 0),
-                        ('MAME content:', 'content.mode', 'mame', 1),
-                        ('Local MAME ROMs:', 'rom.source', 'mame', 2), ('Local SNES ROMs:', 'snes.rom.source', 'snes', 2),
-                        ('Remote MAME ROMs:', 'ssh.remote_dir', 'mame', 3), ('Remote SNES ROMs:', 'snes.remote_dir', 'snes', 3),
-                        ('Local MAME samples:', 'samples.source', 'mame', 4),
-                        ('Remote MAME samples:', 'samples.remote_dir', 'mame', 5)]
+                        ('MAME content:', 'content.mode', ('mame', None), 1),
+                        ('Local MAME ROMs:', 'rom.source', ('mame', 'roms'), 2),
+                        ('Local MAME samples:', 'samples.source', ('mame', 'samples'), 2),
+                        ('Local SNES ROMs:', 'snes.rom.source', ('snes', None), 2),
+                        ('Remote MAME ROMs:', 'ssh.remote_dir', ('mame', 'roms'), 3),
+                        ('Remote MAME samples:', 'samples.remote_dir', ('mame', 'samples'), 3),
+                        ('Remote SNES ROMs:', 'snes.remote_dir', ('snes', None), 3)]
         browse_keys = ('rom.source', 'samples.source', 'snes.rom.source')
 
         def field(parent, row, label, key):

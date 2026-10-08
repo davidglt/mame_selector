@@ -1,6 +1,6 @@
 # Retro Selector
 
-Formerly MAME Selector. The intended repository name is `retro_selector`; the GitHub repository rename is a separate administrative action that this change does not perform, so current repository links keep working.
+Formerly MAME Selector. The GitHub repository has been renamed to `davidglt/retro_selector` (https://github.com/davidglt/retro_selector). No compatibility of old URLs or old file names is claimed or tested here.
 
 Desktop browser for MAME ROM/sample ZIPs and SNES ROM files, with remote file management, built with Python, Tkinter, Pillow, and AsyncSSH.
 
@@ -100,13 +100,13 @@ The readonly `Emulator` selector chooses the active profile. SSH host, port, use
 | `Remote MAME samples` | `samples.remote_dir` | `/var/mobile/Media/ROMs/MAME4iOS/samples/` | MAME |
 | `Remote SNES ROMs` | `snes.remote_dir` | `/var/mobile/Media/ROMs/Snes9xEX/roms/` | SNES |
 
-The configuration area has two columns. The left column holds the shared SSH settings (host, port, user, authentication, password or key, legacy RSA and credential-saving options, listing mode, terminal scrollback lines). The right column orders its controls as `Emulator`, `MAME content` (MAME only), the selected emulator's local ROM directory, its remote ROM directory, then the local and remote MAME samples directories (MAME only). The MAME content selector and all sample controls, including the local sample `Browse...` button, are hidden for SNES; their saved values are preserved and shown again when switching back to MAME. A bottom row holds `Load`, `Save` and `>_ SSH terminal`.
+The configuration area has two columns. The left column holds the shared SSH settings (host, port, user, authentication, password or key, legacy RSA and credential-saving options, listing mode, terminal scrollback lines). The right column always shows `Emulator` at the top. `MAME content` appears immediately below it only when `Emulator` is `mame`. Two grid rows below the selectors are reused for the active paths and show only the fields of the selected content: MAME + `roms` shows `Local MAME ROMs` (with its `Browse...` button) and `Remote MAME ROMs`; MAME + `samples` shows `Local MAME samples` (with its `Browse...` button) and `Remote MAME samples`; SNES shows `Local SNES ROMs` (with its `Browse...` button) and `Remote SNES ROMs`, with `MAME content` and every MAME path field and button hidden. Hidden paths are never reset or overwritten, and `Save` persists both emulator profiles and both MAME path pairs even when hidden. A bottom row holds `Load`, `Save` and `>_ SSH terminal`.
 
 The active profile is stored in `emulator.active` (`mame` or `snes`). Editing one path never changes another. Use the `Browse...` buttons to change local paths; browsing the active source loads it, browsing another only updates its setting.
 
 ### MAME: ROMs and Samples
 
-In the MAME profile the readonly `MAME content` selector (`content.mode`, `roms` or `samples`) chooses between the ROM and sample collections. Samples (local and remote) belong exclusively to MAME. When SNES is active, the `MAME content`, samples source (with its `Browse...` button) and remote samples controls are hidden entirely, since samples do not exist for SNES. Their saved values are preserved and reappear when you switch back to MAME.
+In the MAME profile the readonly `MAME content` selector (`content.mode`, `roms` or `samples`) chooses between the ROM and sample collections. Samples (local and remote) belong exclusively to MAME. Only the local and remote directory fields of the selected content are visible: ROMs mode hides all samples fields and buttons, Samples mode hides the MAME ROM fields and buttons, and SNES hides `MAME content` and all MAME path fields and buttons. Their saved values are preserved and reappear when you switch back to MAME.
 
 ### SNES
 

@@ -128,6 +128,8 @@ roms/
 
 Only files with the profile's extensions (`.zip` for MAME; see SNES above) directly inside the active source are scanned; subdirectories are not scanned. Missing or unreadable PNGs never cause errors; an actual cover always takes precedence, otherwise a built-in placeholder is shown: an SNES controller for SNES, an arcade panel for MAME ROMs, and the musical-note placeholder for MAME samples. Nothing is downloaded or generated. Sample ZIPs do not require PNGs. Images remain local and are not copied.
 
+The placeholders are drawn with Pillow from shapes equivalent to the SVG sources in `assets/` (`snes-sin-caratula.svg`, `mame-sin-caratula.svg`); the SVG files are not loaded at runtime and no SVG library is needed.
+
 ### Search and multiple selection
 
 - Local search ignores case and matches the ZIP filename without its extension.
@@ -266,6 +268,7 @@ Live vi/top behavior on the author's device has not been verified.
 | `mame_selector.cmd` | Unchanged Windows launcher for `mame_selector.py`. |
 | `requirements.txt` | Python dependencies. |
 | `mame_selector.properties.example` | Credential-free configuration template for both modes. |
+| `assets/` | Original SVG sources of the SNES and MAME no-cover placeholders. |
 | `.gitignore` | Excludes local ROMs (`roms/`, `roms_mame/`, `roms_snes/`), samples, settings, and common key files. |
 | `README.md` | Setup and usage documentation. |
 | `LICENSE` | Complete GNU GPLv3 license text. |
@@ -301,7 +304,7 @@ The current implementation uses shared configuration validation. `Refresh`, remo
 
 ### Thumbnails are missing
 
-Check that each optional PNG is readable, shares the ZIP filename stem, and is stored in the same directory. Sample ZIPs can be used without PNGs; their `Samples` placeholder is expected.
+Check that each optional PNG is readable, shares the ZIP filename stem, and is stored in the same directory. Sample ZIPs can be used without PNGs; the musical-note placeholder is expected for samples, and the emulator placeholder for ROMs without a cover.
 
 ### The remote panel is empty after switching modes
 

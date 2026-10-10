@@ -10,6 +10,7 @@ dist/
 /roms/
 /roms_mame/
 /roms_snes/
+/roms_md/
 /samples/
 /samples_mame/
 # Local configuration and server identities

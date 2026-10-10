@@ -29,10 +29,12 @@ HOSTS = BASE / 'retro_selector_host_keys.json'
 DEFAULTS = {
     'emulator.active': 'mame', 'content.mode': 'roms', 'rom.source': 'roms_mame/',
     'samples.source': 'samples_mame/', 'snes.rom.source': 'roms_snes/',
+    'megadrive.rom.source': 'roms_md/',
     'ssh.host': '192.168.69.53', 'ssh.port': '22', 'ssh.username': 'root',
     'ssh.remote_dir': '/var/mobile/Media/ROMs/MAME4iOS/roms/',
     'samples.remote_dir': '/var/mobile/Media/ROMs/MAME4iOS/samples/',
     'snes.remote_dir': '/var/mobile/Media/ROMs/Snes9xEX/roms/',
+    'megadrive.remote_dir': '/var/mobile/Media/ROMs/MD.emu/roms/',
     'ssh.auth_mode': 'password', 'ssh.private_key': '', 'ssh.password': '',
     'ssh.key_passphrase': '', 'ssh.legacy_rsa': 'true',
     'ssh.save_credentials': 'false', 'ssh.remote_listing_mode': 'ssh',
@@ -41,10 +43,11 @@ DEFAULTS = {
 CONNECTION_KEYS = ('ssh.host', 'ssh.port', 'ssh.username', 'ssh.auth_mode', 'ssh.password',
                    'ssh.private_key', 'ssh.key_passphrase', 'ssh.legacy_rsa')
 SCROLLBACK_KEY = 'terminal.scrollback_lines'
-EMULATORS = ('mame', 'snes')
-EMULATOR_NAMES = {'mame': 'MAME', 'snes': 'SNES'}
+EMULATORS = ('mame', 'snes', 'megadrive')
+EMULATOR_NAMES = {'mame': 'MAME', 'snes': 'SNES', 'megadrive': 'Sega Mega Drive / Genesis'}
 LEGACY_ROM_SOURCE = 'roms/'  # rom.source default used before profiles existed
 SNES_EXTENSIONS = ('.sfc', '.smc', '.swc', '.fig', '.zip')
+MEGADRIVE_EXTENSIONS = ('.bin', '.md', '.gen', '.smd', '.zip')
 ENUM_KEYS = {'emulator.active': EMULATORS, 'content.mode': ('roms', 'samples'),
              'ssh.auth_mode': ('password', 'key'), 'ssh.remote_listing_mode': ('ssh', 'sftp')}
 MAX_SCROLLBACK = sys.maxsize  # collections.deque(maxlen=...) cannot represent more; no lower policy cap
@@ -89,7 +92,7 @@ def resolve_config(found):
     values = DEFAULTS.copy()
     values.update(found)
     if found and 'rom.source' not in found and not any(
-            key == 'emulator.active' or key.startswith('snes.') for key in found):
+            key == 'emulator.active' or key.startswith(('snes.', 'megadrive.')) for key in found):
         values['rom.source'] = LEGACY_ROM_SOURCE
     for key, allowed in ENUM_KEYS.items():
         if values[key] not in allowed:
@@ -101,8 +104,10 @@ def active_keys(mode, emulator='mame'):
     """Return the (local source key, remote directory key) of a profile."""
     if emulator == 'snes':
         return 'snes.rom.source', 'snes.remote_dir'
+    if emulator == 'megadrive':
+        return 'megadrive.rom.source', 'megadrive.remote_dir'
     if emulator != 'mame':
-        raise ValueError('Select MAME or SNES.')
+        raise ValueError('Select MAME, SNES or Sega Mega Drive / Genesis.')
     if mode == 'roms':
         return 'rom.source', 'ssh.remote_dir'
     if mode == 'samples':
@@ -112,7 +117,9 @@ def active_keys(mode, emulator='mame'):
 
 def profile_extensions(emulator):
     """Lowercase file extensions handled by a profile."""
-    return SNES_EXTENSIONS if emulator == 'snes' else ('.zip',)
+    if emulator == 'snes':
+        return SNES_EXTENSIONS
+    return MEGADRIVE_EXTENSIONS if emulator == 'megadrive' else ('.zip',)
 
 
 def shell_patterns(extensions):
@@ -247,6 +254,12 @@ PLACEHOLDER_SHAPES = {
         ('ellipse', 'red', 5, 40, 34, 13, 13),
         ('ellipse', 'blue', 2, 77, 75, 7, 5), ('ellipse', 'yellow', 2, 96, 75, 7, 5),
         ('ellipse', 'green', 2, 84, 86, 7, 5)],
+    'megadrive': [
+        ('path', 'light', 5, 'M24 20h80l8 12v78H16V32Z'),
+        ('path', 'dark', 0, 'M32 34h64v34H32Z'),
+        ('path', 'mid', 0, 'M30 80h68v8H30Z'),
+        ('path', 'mid', 0, 'M30 94h68v8H30Z'),
+        ('ellipse', 'red', 2, 64, 51, 12, 8)],
 }
 
 
@@ -901,7 +914,7 @@ class TerminalWindow:
 class App:
     def __init__(self, root):
         self.root = root
-        root.title('Retro Selector - MAME / SNES - SSH / SCP')
+        root.title('Retro Selector - MAME / SNES / Mega Drive - SSH / SCP')
         root.geometry('1450x950')
         root.minsize(1100, 760)
         found = {}
@@ -959,8 +972,8 @@ class App:
         return path.stem if self.emulator() == 'mame' else path.name
 
     def update_titles(self):
-        if self.emulator() == 'snes':
-            label = 'SNES ROMs'
+        if self.emulator() != 'mame':
+            label = f'{EMULATOR_NAMES[self.emulator()]} ROMs'
         else:
             label = 'MAME Samples' if self.v['content.mode'].get() == 'samples' else 'MAME ROMs'
         self.local_panel.configure(text=f'Local {label}')
@@ -1028,7 +1041,7 @@ class App:
         for column in (left, right):
             column.columnconfigure(1, weight=1)
         self.entries = {}
-        self.profile_rows = {('mame', None): [], ('mame', 'roms'): [], ('mame', 'samples'): [], ('snes', None): []}
+        self.profile_rows = {('mame', None): [], ('mame', 'roms'): [], ('mame', 'samples'): [], ('snes', None): [], ('megadrive', None): []}
         left_fields = [('SSH host / IP:', 'ssh.host'), ('SSH port:', 'ssh.port'), ('User:', 'ssh.username'),
                        ('Authentication:', 'ssh.auth_mode'), ('Password:', 'ssh.password'),
                        ('Private key:', 'ssh.private_key'), ('Key passphrase:', 'ssh.key_passphrase'),
@@ -1040,10 +1053,12 @@ class App:
                         ('Local MAME ROMs:', 'rom.source', ('mame', 'roms'), 2),
                         ('Local MAME samples:', 'samples.source', ('mame', 'samples'), 2),
                         ('Local SNES ROMs:', 'snes.rom.source', ('snes', None), 2),
+                        ('Local Mega Drive ROMs:', 'megadrive.rom.source', ('megadrive', None), 2),
                         ('Remote MAME ROMs:', 'ssh.remote_dir', ('mame', 'roms'), 3),
                         ('Remote MAME samples:', 'samples.remote_dir', ('mame', 'samples'), 3),
-                        ('Remote SNES ROMs:', 'snes.remote_dir', ('snes', None), 3)]
-        browse_keys = ('rom.source', 'samples.source', 'snes.rom.source')
+                        ('Remote SNES ROMs:', 'snes.remote_dir', ('snes', None), 3),
+                        ('Remote Mega Drive ROMs:', 'megadrive.remote_dir', ('megadrive', None), 3)]
+        browse_keys = ('rom.source', 'samples.source', 'snes.rom.source', 'megadrive.rom.source')
 
         def field(parent, row, label, key):
             name = ttk.Label(parent, text=label)
@@ -1206,8 +1221,9 @@ class App:
         values = {key: var.get() for key, var in self.v.items()}
         if terminal or scrollback:
             values[SCROLLBACK_KEY] = str(parse_scrollback(values[SCROLLBACK_KEY]))
-        for key in ('rom.source', 'samples.source', 'snes.rom.source', 'ssh.host', 'ssh.port', 'ssh.username',
-                    'ssh.remote_dir', 'samples.remote_dir', 'snes.remote_dir', 'ssh.private_key'):
+        for key in ('rom.source', 'samples.source', 'snes.rom.source', 'megadrive.rom.source', 'ssh.host',
+                    'ssh.port', 'ssh.username', 'ssh.remote_dir', 'samples.remote_dir', 'snes.remote_dir',
+                    'megadrive.remote_dir', 'ssh.private_key'):
             values[key] = values[key].strip()
         if terminal:
             values = {key: values[key] for key in CONNECTION_KEYS + (SCROLLBACK_KEY,)}
@@ -1242,8 +1258,8 @@ class App:
 
     @staticmethod
     def profile_name(values):
-        if values['emulator.active'] == 'snes':
-            return 'SNES ROMs'
+        if values['emulator.active'] != 'mame':
+            return f"{EMULATOR_NAMES[values['emulator.active']]} ROMs"
         return 'MAME samples' if values['content.mode'] == 'samples' else 'MAME ROMs'
 
     def save(self):

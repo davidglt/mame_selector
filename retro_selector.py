@@ -945,7 +945,8 @@ class App:
         self.status, self.pages = tk.StringVar(value='Ready'), tk.StringVar()
         self.build()
         for key in ('ssh.host', 'ssh.port', 'ssh.username', 'ssh.remote_dir',
-                    'samples.remote_dir', 'snes.remote_dir', 'ssh.remote_listing_mode'):
+                    'samples.remote_dir', 'snes.remote_dir', 'megadrive.remote_dir',
+                    'ssh.remote_listing_mode'):
             self.v[key].trace_add('write', self.invalidate_remote)
         self.v['content.mode'].trace_add('write', self.content_changed)
         self.v['emulator.active'].trace_add('write', self.profile_changed)

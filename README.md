@@ -123,7 +123,7 @@ The profile is labelled `Sega Mega Drive / Genesis` and stored as `megadrive`. I
 
 Historical notes on how the author built MD.emu 1.4.17D on the iPad 2 itself are in [docs/mdemu-1.4.17D-build-history.md](docs/mdemu-1.4.17D-build-history.md).
 
-Not verified: operation on a real iPad 2 / iOS 6.1.3 / MD.emu (directory layout, SCP/SFTP behaviour, ROM loading). Only the configuration, profile selection and extension filtering are covered by `python -m unittest discover tests`.
+Not verified: operation on a real iPad 2 / iOS 6.1.3 / MD.emu (directory layout, SCP/SFTP behaviour, ROM loading). The automated tests (see [Automated tests](#automated-tests)) do not cover any of this.
 
 ### Switching profiles
 
@@ -293,6 +293,36 @@ Use an expendable file and a test server first.
 
 Live vi/top behavior on the author's device has not been verified.
 
+## Automated tests
+
+The suite in `tests/` uses only the standard `unittest` runner and the application's own dependencies; it never connects to a device and uses no ROMs, credentials or user data. Everything runs against a temporary directory with SSH/SCP/SFTP, dialogs and threads replaced by mocks, plus a real POSIX `sh` for the remote-listing filter.
+
+| File | Covers |
+| --- | --- |
+| `tests/test_config.py` | Defaults, parsing, legacy `rom.source` fallback, invalid values, the example properties file, per-profile keys and extension filters (MAME, SNES, Mega Drive; saves and other systems rejected), placeholders, size/disk helpers and terminal helpers. |
+| `tests/test_app.py` | Local loading and filtering per profile, covers, profile switching (marks, search and remote state isolated, visible fields), save/load round trips and compatibility with existing configurations, validation errors, copy/delete confirmations and refusals, listing events and batch results. |
+| `tests/test_transfer.py` | Remote listing (SSH shell and SFTP), copy and deletion workers, partial failures and lost connections, shell quoting, symlink/directory rejection, host key checking and authentication options. |
+
+Run from the repository root.
+
+Windows CMD (the Tk GUI tests need a desktop session):
+
+```cmd
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+Linux (Tkinter, for example `python3-tk`, and a virtual display such as `xvfb`):
+
+```bash
+python3 -m pip install -r requirements.txt
+xvfb-run -a python3 -m unittest discover -s tests -v
+```
+
+Without a display, the Tk-based tests are reported as skipped (never as passed); `tests/test_config.py` tests that do not need Tk still run, but `tkinter` itself must be importable. Skipped tests mean the GUI behaviour was not checked.
+
+Not covered by automated tests, and still pending manual verification: the real Tk window on Windows (layout, appearance, mouse use), real SSH/SCP/SFTP against an iPad 2 on iOS 6.1.3 (including the host key prompt and the interactive terminal), whether MD.emu, MAME4iOS or Snes9xEX accept the transferred files, ROM loading and play, sound and iCade input.
+
 ## Project files
 
 | File | Purpose |
@@ -303,6 +333,8 @@ Live vi/top behavior on the author's device has not been verified.
 | `retro_selector.properties.example` | Credential-free configuration template for both modes. |
 | `assets/` | Original SVG sources of the SNES and MAME no-cover placeholders. |
 | `.gitignore` | Excludes local ROMs (`roms/`, `roms_mame/`, `roms_snes/`, `roms_md/`), samples, settings, and common key files. |
+| `tests/` | Automated `unittest` suite (see [Automated tests](#automated-tests)). |
+| `docs/` | Historical notes on building MD.emu 1.4.17D. |
 | `README.md` | Setup and usage documentation. |
 | `LICENSE` | Complete GNU GPLv3 license text. |
 

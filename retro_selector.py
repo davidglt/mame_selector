@@ -270,6 +270,7 @@ def emulator_placeholder(emulator):
     return _placeholders[emulator].copy()
 
 
+PRESENT_LABEL = 'Ya en remoto'
 SPACE_NOT_LOADED = 'Disk space: not loaded'
 SPACE_LOADING = 'Disk space: loading...'
 DF_LINE = re.compile(r'(\d+)\s+(\d+)\s+(\d+)\s+\d+%\s+/')
@@ -942,6 +943,7 @@ class App:
         self.images, self.cards, self.remote_rows = [], {}, {}
         self.search, self.remote_search = tk.StringVar(), tk.StringVar()
         self.count, self.remote_count = tk.StringVar(), tk.StringVar()
+        self.presence = tk.StringVar()
         self.status, self.pages = tk.StringVar(value='Ready'), tk.StringVar()
         self.build()
         for key in ('ssh.host', 'ssh.port', 'ssh.username', 'ssh.remote_dir',
@@ -1129,6 +1131,7 @@ class App:
             if panel is right:
                 self.refresh_button = ttk.Button(tools, text='Refresh', command=self.refresh)
                 self.refresh_button.pack(side='left', padx=5)
+        ttk.Label(left, textvariable=self.presence, padding=(8, 0)).pack(anchor='w')
         for panel, remote in ((left, False), (right, True)):
             controls = ttk.Frame(panel, padding=8)
             controls.pack(fill='x')
@@ -1357,11 +1360,13 @@ class App:
             check = tk.Checkbutton(card, text=self.label(path), variable=variable, wraplength=145,
                                    command=lambda item=path: self.toggle(item))
             check.pack(fill='x')
+            badge = tk.Label(card, text='', font=('TkDefaultFont', 8, 'bold'))
+            badge.pack(fill='x')
             button = tk.Button(card, image=photo, relief='flat', command=lambda item=path: self.toggle(item))
             button.pack(fill='both', expand=True)
-            for widget in (check, button):
+            for widget in (check, badge, button):
                 widget.bind('<MouseWheel>', self.wheel)
-            self.cards[path] = card, variable, check, button
+            self.cards[path] = card, variable, check, badge, button
         self.update_marks()
         self.canvas.yview_moveto(0)
 
@@ -1402,12 +1407,22 @@ class App:
         valid = self.remote_target is not None and self.remote_target == self.signature()
         self.delete_button.configure(text=f'Delete selected ({len(self.remote_marks)})',
                                      state='normal' if self.remote_marks and valid and not self.busy else 'disabled')
-        for path, (card, variable, check, button) in self.cards.items():
+        known = self.remote_known()
+        self.presence.set(f'Already on remote: matched by exact file name in the full remote list ({len(self.remote)} files). '
+                          'Not a content check; independent of selection.' if known
+                          else 'Remote not checked — presence unknown. Click Refresh.')
+        for path, (card, variable, check, badge, button) in self.cards.items():
             variable.set(path in self.marks)
-            color = '#b9dcff' if path in self.marks else '#f0f0f0'
+            present = known and path.name in self.remote
+            color = '#b9dcff' if path in self.marks else '#d0d0d0' if present else '#f0f0f0'
             card.configure(background=color)
+            badge.configure(background=color, foreground='#333333', text=PRESENT_LABEL if present else '')
             for widget in (check, button):
-                widget.configure(background=color, state='disabled' if self.busy else 'normal')
+                widget.configure(background=color, foreground='#444444' if present else 'black',
+                                 state='disabled' if self.busy else 'normal')
+
+    def remote_known(self):
+        return self.remote_target is not None and self.remote_target == self.signature()
 
     def turn(self, direction):
         self.page += direction

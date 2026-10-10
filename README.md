@@ -171,6 +171,12 @@ The placeholders are drawn with Pillow from shapes equivalent to the SVG sources
 - Loading a different source or changing content mode clears the previous selection.
 - Editing the active source requires clicking `Load` before copying.
 
+### Already on remote indicator
+
+After a valid remote listing, local files whose full name (with extension, case-sensitive as reported by the server) appears in the complete remote list are dimmed and labelled **Ya en remoto**. This works for MAME ROMs and samples, SNES and Mega Drive. It only means a remote file has the same name: it does not claim identical content, integrity or compatibility.
+
+The indicator is separate from the selection checkbox: nothing is selected or deselected automatically, and files already on the remote can still be selected and copied again (the usual confirmation about overwriting applies). The remote search filter does not affect it. Before the remote list is loaded, or after it is invalidated (profile, content, host, port, user, directory or listing mode change, or a failed listing), no indicator is shown and the panel reports that the remote is not checked. Indicators update after Refresh and the existing refreshes after copying or deleting; no periodic connections are made.
+
 ### Batch copying
 
 `Copy selected` displays the selected profile and content mode, complete file list (including marks hidden by the search filter), and destination before transfer.

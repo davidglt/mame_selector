@@ -121,6 +121,8 @@ The SNES profile browses and transfers files with these extensions (case-insensi
 
 The profile is labelled `Sega Mega Drive / Genesis` and stored as `megadrive`. It targets plain cartridge ROMs for an old MD.emu build on an iPad 2 with iOS 6.1.3 and Sega CD disabled. It lists and transfers files with these extensions (case-insensitive): `.bin`, `.md`, `.gen`, `.smd` and `.zip`. Save files and other companions (for example `.srm`, `.sav`, state files) are not ROM extensions and are never listed, copied or deleted by this profile. Sega CD, 32X, MD+ and MSU-MD content is not offered or supported by this option. No MAME validations, BIOS, parent or sample checks are applied; files are transferred as they are, without conversion or unzipping. Covers work as in SNES (`game.png` next to `game.md`), otherwise a cartridge placeholder is shown. The extension filter does not guarantee that the emulator accepts a file. The remote directory is only a proposal: edit it to the real location on your device; the application does not create it.
 
+Historical notes on how the author built MD.emu 1.4.17D on the iPad 2 itself are in [docs/mdemu-1.4.17D-build-history.md](docs/mdemu-1.4.17D-build-history.md).
+
 Not verified: operation on a real iPad 2 / iOS 6.1.3 / MD.emu (directory layout, SCP/SFTP behaviour, ROM loading). Only the configuration, profile selection and extension filtering are covered by `python -m unittest discover tests`.
 
 ### Switching profiles

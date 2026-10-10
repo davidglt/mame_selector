@@ -2,9 +2,9 @@
 
 GitHub: [davidglt/retro_selector](https://github.com/davidglt/retro_selector).
 
-Desktop browser for MAME ROM/sample ZIPs and SNES ROM files, with remote file management, built with Python, Tkinter, Pillow, and AsyncSSH.
+Desktop browser for MAME ROM/sample ZIPs, SNES ROM files and Sega Mega Drive / Genesis ROM files, with remote file management, built with Python, Tkinter, Pillow, and AsyncSSH.
 
-Browse local MAME ZIPs or supported SNES ROM files, transfer selected files over SCP, and list or delete matching remote files over SSH. Switch between MAME (ROMs/Samples) and SNES profiles in the same application: all functionality remains in `retro_selector.py`, with no second Python program.
+Browse local MAME ZIPs or supported SNES ROM files, transfer selected files over SCP, and list or delete matching remote files over SSH. Switch between MAME (ROMs/Samples), SNES and Sega Mega Drive / Genesis (`megadrive`) profiles in the same application: all functionality remains in `retro_selector.py`, with no second Python program.
 
 ## Project status
 
@@ -18,6 +18,7 @@ This is the author's example setup, not tested compatibility or a guarantee for 
 - an iCade controller;
 - the MAME profile, with local ROMs in `roms_mame/` by default and your existing configured remote MAME ROM destination (preserved as is; this documentation does not assume a value);
 - the SNES profile, with local ROMs in `roms_snes/` by default and the remote destination `/var/mobile/Media/ROMs/Snes9xEX/roms/`;
+- the Sega Mega Drive / Genesis profile, with local ROMs in `roms_md/` by default and the proposed, editable remote destination `/var/mobile/Media/ROMs/MD.emu/roms/` (a suggestion for an old MD.emu build; it is not known to exist on your device, so check it);
 - samples exist only for MAME.
 
 The desktop application browses and transfers ROMs and offers SSH terminal access. It does not install emulators, jailbreak devices or configure the iCade. Emulator versions, jailbreak method, controller mappings and server details are outside its scope; enter your own host and credentials in the interface. The example properties file keeps credentials empty.
@@ -49,6 +50,8 @@ D:\Ipad2\
 │   ├── galaxian.png
 │   ├── galaga.zip
 │   └── galaga.png
+├── roms_md\
+│   └── example.md
 ├── roms_snes\
 │   └── example.sfc
 └── samples_mame\
@@ -75,7 +78,7 @@ Alternatively, run directly:
 ## Quick start
 
 1. Run `retro_selector.cmd`.
-2. Choose `mame` or `snes` in `Emulator` (and `roms` or `samples` in `MAME content` for MAME).
+2. Choose `mame`, `snes` or `megadrive` in `Emulator` (and `roms` or `samples` in `MAME content` for MAME).
 3. Check the matching local source and click `Load` if you have edited its path.
 4. Enter the SSH host, port, username, and credentials; check the matching remote destination.
 5. Select the remote listing mode and enable legacy RSA only if required.
@@ -87,7 +90,7 @@ Alternatively, run directly:
 
 For the first deletion test, use remote files for the selected profile which you can safely recreate.
 
-## Emulator profiles (MAME / SNES)
+## Emulator profiles (MAME / SNES / Sega Mega Drive / Genesis)
 
 The readonly `Emulator` selector chooses the active profile. SSH host, port, user, credentials, listing mode and the SSH terminal are shared by both profiles; local sources and remote destinations are separate.
 
@@ -96,13 +99,15 @@ The readonly `Emulator` selector chooses the active profile. SSH host, port, use
 | `MAME ROM source` | `rom.source` | `roms_mame/` | MAME |
 | `MAME samples source` | `samples.source` | `samples_mame/` | MAME |
 | `SNES ROM source` | `snes.rom.source` | `roms_snes/` | SNES |
+| `Mega Drive ROM source` | `megadrive.rom.source` | `roms_md/` | Sega Mega Drive / Genesis |
 | `Remote MAME ROMs` | `ssh.remote_dir` | `/var/mobile/Media/ROMs/MAME4iOS/roms/` | MAME |
 | `Remote MAME samples` | `samples.remote_dir` | `/var/mobile/Media/ROMs/MAME4iOS/samples/` | MAME |
 | `Remote SNES ROMs` | `snes.remote_dir` | `/var/mobile/Media/ROMs/Snes9xEX/roms/` | SNES |
+| `Remote Mega Drive ROMs` | `megadrive.remote_dir` | `/var/mobile/Media/ROMs/MD.emu/roms/` (proposal, editable) | Sega Mega Drive / Genesis |
 
-The configuration area has two columns. The left column holds the shared SSH settings (host, port, user, authentication, password or key, legacy RSA and credential-saving options, listing mode, terminal scrollback lines). The right column always shows `Emulator` at the top. `MAME content` appears immediately below it only when `Emulator` is `mame`. Two grid rows below the selectors are reused for the active paths and show only the fields of the selected content: MAME + `roms` shows `Local MAME ROMs` (with its `Browse...` button) and `Remote MAME ROMs`; MAME + `samples` shows `Local MAME samples` (with its `Browse...` button) and `Remote MAME samples`; SNES shows `Local SNES ROMs` (with its `Browse...` button) and `Remote SNES ROMs`, with `MAME content` and every MAME path field and button hidden. Hidden paths are never reset or overwritten, and `Save` persists both emulator profiles and both MAME path pairs even when hidden. A bottom row holds `Load`, `Save` and `>_ SSH terminal`.
+The configuration area has two columns. The left column holds the shared SSH settings (host, port, user, authentication, password or key, legacy RSA and credential-saving options, listing mode, terminal scrollback lines). The right column always shows `Emulator` at the top. `MAME content` appears immediately below it only when `Emulator` is `mame`. Two grid rows below the selectors are reused for the active paths and show only the fields of the selected content: MAME + `roms` shows `Local MAME ROMs` (with its `Browse...` button) and `Remote MAME ROMs`; MAME + `samples` shows `Local MAME samples` (with its `Browse...` button) and `Remote MAME samples`; SNES shows `Local SNES ROMs` (with its `Browse...` button) and `Remote SNES ROMs`, Sega Mega Drive / Genesis shows `Local Mega Drive ROMs` (with its `Browse...` button) and `Remote Mega Drive ROMs`; in both cases `MAME content` and every MAME path field and button are hidden. Hidden paths are never reset or overwritten, and `Save` persists both emulator profiles and both MAME path pairs even when hidden. A bottom row holds `Load`, `Save` and `>_ SSH terminal`.
 
-The active profile is stored in `emulator.active` (`mame` or `snes`). Editing one path never changes another. Use the `Browse...` buttons to change local paths; browsing the active source loads it, browsing another only updates its setting.
+The active profile is stored in `emulator.active` (`mame`, `snes` or `megadrive`). Editing one path never changes another. Use the `Browse...` buttons to change local paths; browsing the active source loads it, browsing another only updates its setting.
 
 ### MAME: ROMs and Samples
 
@@ -111,6 +116,14 @@ In the MAME profile the readonly `MAME content` selector (`content.mode`, `roms`
 ### SNES
 
 The SNES profile browses and transfers files with these extensions (case-insensitive): `.sfc`, `.smc`, `.swc`, `.fig` and `.zip`. This is the list the application filters on; it does not check that the emulator or any device accepts a particular file. Files are copied and deleted as they are, with no conversion, header removal, renaming or unzipping. No MAME sample matching or MAME-specific messages (BIOS/parent warnings) are applied. Local files are shown by full filename; covers are optional: an optional PNG with the same stem (`game.png` for `game.sfc`) is used as a thumbnail when present and readable.
+
+### Sega Mega Drive / Genesis
+
+The profile is labelled `Sega Mega Drive / Genesis` and stored as `megadrive`. It targets plain cartridge ROMs for an old MD.emu build on an iPad 2 with iOS 6.1.3 and Sega CD disabled. It lists and transfers files with these extensions (case-insensitive): `.bin`, `.md`, `.gen`, `.smd` and `.zip`. Save files and other companions (for example `.srm`, `.sav`, state files) are not ROM extensions and are never listed, copied or deleted by this profile. Sega CD, 32X, MD+ and MSU-MD content is not offered or supported by this option. No MAME validations, BIOS, parent or sample checks are applied; files are transferred as they are, without conversion or unzipping. Covers work as in SNES (`game.png` next to `game.md`), otherwise a cartridge placeholder is shown. The extension filter does not guarantee that the emulator accepts a file. The remote directory is only a proposal: edit it to the real location on your device; the application does not create it.
+
+Historical notes on how the author built MD.emu 1.4.17D on the iPad 2 itself are in [docs/mdemu-1.4.17D-build-history.md](docs/mdemu-1.4.17D-build-history.md).
+
+Not verified: operation on a real iPad 2 / iOS 6.1.3 / MD.emu (directory layout, SCP/SFTP behaviour, ROM loading). The automated tests (see [Automated tests](#automated-tests)) do not cover any of this.
 
 ### Switching profiles
 
@@ -122,7 +135,7 @@ If the selected source does not exist, the application reports an error and leav
 
 ### Existing configuration files
 
-Existing `rom.source`, `ssh.remote_dir`, `samples.source`, `samples.remote_dir` and `content.mode` settings stay MAME settings and are not replaced by SNES values. Missing keys use defaults, including `emulator.active=mame`, `snes.rom.source=roms_snes/`, `snes.remote_dir=/var/mobile/Media/ROMs/Snes9xEX/roms/` and `terminal.scrollback_lines=10000`. For MAME ROMs, a missing `rom.source` resolves to the previous `roms/` value when the configuration contains at least one recognized setting but contains none of `rom.source`, `emulator.active` or any `snes.*` setting. Otherwise it resolves to `roms_mame/`, including when no recognized settings are loaded (no file, or an empty, comment-only or unrecognized-only file). An explicitly configured `rom.source` is kept unchanged.
+Existing `rom.source`, `ssh.remote_dir`, `samples.source`, `samples.remote_dir` and `content.mode` settings stay MAME settings and are not replaced by SNES values. Missing keys use defaults, including `emulator.active=mame`, `snes.rom.source=roms_snes/`, `snes.remote_dir=/var/mobile/Media/ROMs/Snes9xEX/roms/`, `megadrive.rom.source=roms_md/`, `megadrive.remote_dir=/var/mobile/Media/ROMs/MD.emu/roms/` and `terminal.scrollback_lines=10000`. For MAME ROMs, a missing `rom.source` resolves to the previous `roms/` value when the configuration contains at least one recognized setting but contains none of `rom.source`, `emulator.active` or any `snes.*` or `megadrive.*` setting. Otherwise it resolves to `roms_mame/`, including when no recognized settings are loaded (no file, or an empty, comment-only or unrecognized-only file). An explicitly configured `rom.source` is kept unchanged.
 
 The default local MAME samples folder is now `samples_mame/` (previously `samples/`). An explicitly configured `samples.source` is preserved unchanged; only new or missing values use the new default. The application never renames, moves or deletes your files: either rename your existing local `samples/` folder to `samples_mame/` yourself, or set `MAME samples source` to the existing folder. `samples.remote_dir` is unchanged.
 
@@ -142,7 +155,7 @@ roms_mame/
 └── galaga.png
 ```
 
-Only files with the profile's extensions (`.zip` for MAME; see SNES above) directly inside the active source are scanned; subdirectories are not scanned. Missing or unreadable PNGs never cause errors; an actual cover always takes precedence, otherwise a built-in placeholder is shown: an SNES controller for SNES, an arcade panel for MAME ROMs, and the musical-note placeholder for MAME samples. Nothing is downloaded or generated. MAME sample ZIPs do not require PNGs. Images remain local and are not copied.
+Only files with the profile's extensions (`.zip` for MAME; see SNES and Sega Mega Drive / Genesis above) directly inside the active source are scanned; subdirectories are not scanned. Missing or unreadable PNGs never cause errors; an actual cover always takes precedence, otherwise a built-in placeholder is shown: an SNES controller for SNES, an arcade panel for MAME ROMs, and the musical-note placeholder for MAME samples. Nothing is downloaded or generated. MAME sample ZIPs do not require PNGs. Images remain local and are not copied.
 
 The placeholders are drawn with Pillow from shapes equivalent to the SVG sources in `assets/` (`snes-sin-caratula.svg`, `mame-sin-caratula.svg`); the SVG files are not loaded at runtime and no SVG library is needed.
 
@@ -280,6 +293,36 @@ Use an expendable file and a test server first.
 
 Live vi/top behavior on the author's device has not been verified.
 
+## Automated tests
+
+The suite in `tests/` uses only the standard `unittest` runner and the application's own dependencies; it never connects to a device and uses no ROMs, credentials or user data. Everything runs against a temporary directory with SSH/SCP/SFTP, dialogs and threads replaced by mocks, plus a real POSIX `sh` for the remote-listing filter.
+
+| File | Covers |
+| --- | --- |
+| `tests/test_config.py` | Defaults, parsing, legacy `rom.source` fallback, invalid values, the example properties file, per-profile keys and extension filters (MAME, SNES, Mega Drive; saves and other systems rejected), placeholders, size/disk helpers and terminal helpers. |
+| `tests/test_app.py` | Local loading and filtering per profile, covers, profile switching (marks, search and remote state isolated, visible fields), save/load round trips and compatibility with existing configurations, validation errors, copy/delete confirmations and refusals, listing events and batch results. |
+| `tests/test_transfer.py` | Remote listing (SSH shell and SFTP), copy and deletion workers, partial failures and lost connections, shell quoting, symlink/directory rejection, host key checking and authentication options. |
+
+Run from the repository root.
+
+Windows CMD (the Tk GUI tests need a desktop session):
+
+```cmd
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+Linux (Tkinter, for example `python3-tk`, and a virtual display such as `xvfb`):
+
+```bash
+python3 -m pip install -r requirements.txt
+xvfb-run -a python3 -m unittest discover -s tests -v
+```
+
+Without a display, the Tk-based tests are reported as skipped (never as passed); `tests/test_config.py` tests that do not need Tk still run, but `tkinter` itself must be importable. Skipped tests mean the GUI behaviour was not checked.
+
+Not covered by automated tests, and still pending manual verification: the real Tk window on Windows (layout, appearance, mouse use), real SSH/SCP/SFTP against an iPad 2 on iOS 6.1.3 (including the host key prompt and the interactive terminal), whether MD.emu, MAME4iOS or Snes9xEX accept the transferred files, ROM loading and play, sound and iCade input.
+
 ## Project files
 
 | File | Purpose |
@@ -289,7 +332,9 @@ Live vi/top behavior on the author's device has not been verified.
 | `requirements.txt` | Python dependencies. |
 | `retro_selector.properties.example` | Credential-free configuration template for both modes. |
 | `assets/` | Original SVG sources of the SNES and MAME no-cover placeholders. |
-| `.gitignore` | Excludes local ROMs (`roms/`, `roms_mame/`, `roms_snes/`), samples, settings, and common key files. |
+| `.gitignore` | Excludes local ROMs (`roms/`, `roms_mame/`, `roms_snes/`, `roms_md/`), samples, settings, and common key files. |
+| `tests/` | Automated `unittest` suite (see [Automated tests](#automated-tests)). |
+| `docs/` | Historical notes on building MD.emu 1.4.17D. |
 | `README.md` | Setup and usage documentation. |
 | `LICENSE` | Complete GNU GPLv3 license text. |
 
@@ -298,7 +343,7 @@ Local files generated by the application:
 - `retro_selector.properties`
 - `retro_selector_host_keys.json`
 
-The repository-root `/roms/`, `/roms_mame/`, `/roms_snes/`, `/samples_mame/` and `/samples/` folders are excluded from Git (`/samples/` remains as a protective rule for old local collections). Custom collection paths are not automatically added to `.gitignore`, and ignore rules do not remove files already tracked by Git.
+The repository-root `/roms/`, `/roms_mame/`, `/roms_snes/`, `/roms_md/`, `/samples_mame/` and `/samples/` folders are excluded from Git (`/samples/` remains as a protective rule for old local collections). Custom collection paths are not automatically added to `.gitignore`, and ignore rules do not remove files already tracked by Git.
 
 ## Troubleshooting
 
